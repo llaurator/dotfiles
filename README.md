@@ -83,27 +83,34 @@ inventar valores. `local.gitconfig` está ignorado y no se versiona.
 
 `ssh/.ssh/config` es genérico e incluye `~/.ssh/config.d/*`. Solo los `*.example` vacíos
 se versionan; los `*.conf` reales son locales. El instalador crea `~/.ssh` y `config.d`
-con modo `0700`, sin generar hosts ni claves ni reemplazar configuraciones locales.
+con modo `0700`, sin generar hosts ni claves ni reemplazar configuraciones locales. Si no
+hay ningún `*.conf` local tras el despliegue, muestra un mensaje informativo para recordar
+que se pueden copiar y adaptar los ejemplos; esa situación no se considera un error.
 
 Claves privadas y públicas, `known_hosts`, `authorized_keys`, sockets, tokens y `.env`
 están ignorados. Revisa siempre `git status` antes de confirmar cambios.
 
 ## VS Code
 
-La lista versionada contiene exclusivamente Prettier, Ruff, Python Environments, Spanish
-Language Pack y Dracula Official. Python Environments permite descubrir y seleccionar los
-entornos virtuales de los proyectos Python, incluidos los directorios `.venv`. `settings.json`
-activa formato al guardar, Prettier para JS, TS, JSON, CSS y HTML, Ruff para Python, limpieza
-de espacios, newline final, regla a 100, minimapa desactivado y `Dracula Theme`. El idioma
-puede seleccionarse con “Configure Display Language”; no se mantiene un fichero de locale
+La lista versionada contiene exclusivamente Prettier, Ruff, Spanish Language Pack y
+Dracula Official. Las extensiones ya instaladas se detectan sin distinguir mayúsculas y
+minúsculas, y solo se invoca la instalación para las ausentes. `settings.json` activa formato
+al guardar, Prettier para JS, TS, JSON, CSS y HTML, Ruff para Python, limpieza de espacios,
+newline final, regla a 100, minimapa desactivado y `Dracula Theme`. El idioma puede
+seleccionarse con “Configure Display Language”; no se mantiene un fichero de locale
 dependiente de versión.
 
 En macOS se instala el cask `visual-studio-code`; en Arch, el paquete oficial `code`.
 Fedora y Debian/Ubuntu no reciben repositorios Microsoft: si `code` falta, se avisa y se
 continúa. La fuente de settings es única. El instalador enlaza a
-`~/Library/Application Support/Code/User/settings.json` en macOS o
+`~/.config/dotfiles/vscode/settings.json` mediante Stow y aplica su contenido a
+`~/Library/Application Support/Code/User/settings.json` en macOS o a
 `${XDG_CONFIG_HOME:-~/.config}/Code/User/settings.json` en Linux. Nunca reemplaza un
-archivo ni un enlace ajeno existente.
+archivo local a ciegas: valida con `jq` y fusiona las claves locales con las gestionadas,
+dando prioridad a estas últimas cuando coinciden. Conserva las claves locales adicionales,
+crea una única copia original `settings.json.pre-dotfiles` y reemplaza el destino mediante un
+temporal validado. Si el JSON local no es válido, lo deja intacto, avisa y continúa con el
+resto de la instalación. `jq` se instala como dependencia del sistema.
 
 ## Desarrollo y macOS
 
