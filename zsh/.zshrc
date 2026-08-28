@@ -6,12 +6,12 @@ fi
 ZSH_CONFIG="$HOME/.config/zsh"
 DOTFILES_PROFILE_FILE="$HOME/.config/dotfiles/profile"
 
-[[ -f "$ZSH_CONFIG/common.zsh" ]] && source "$ZSH_CONFIG/common.zsh"
-
 case "$OSTYPE" in
   darwin*) [[ -f "$ZSH_CONFIG/macos.zsh" ]] && source "$ZSH_CONFIG/macos.zsh" ;;
   linux*)  [[ -f "$ZSH_CONFIG/linux.zsh" ]] && source "$ZSH_CONFIG/linux.zsh" ;;
 esac
+
+[[ -f "$ZSH_CONFIG/common.zsh" ]] && source "$ZSH_CONFIG/common.zsh"
 
 if [[ -f "$DOTFILES_PROFILE_FILE" ]]; then
   DOTFILES_PROFILE="$(<"$DOTFILES_PROFILE_FILE")"
@@ -22,5 +22,5 @@ if [[ -f "$DOTFILES_PROFILE_FILE" ]]; then
   esac
 fi
 
-[[ -f "$HOME/.p10k.zsh" ]] && source "$HOME/.p10k.zsh"
+[[ -r "$HOME/.p10k.zsh" ]] && source "$HOME/.p10k.zsh"
 unset ZSH_CONFIG DOTFILES_PROFILE DOTFILES_PROFILE_FILE

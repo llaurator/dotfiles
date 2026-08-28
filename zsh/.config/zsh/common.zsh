@@ -3,13 +3,15 @@ export BAT_THEME="Dracula"
 export PATH="$HOME/.local/bin:$PATH"
 
 if [[ -d "$ZSH" ]]; then
-  plugins=(git colored-man-pages extract sudo zsh-autosuggestions zsh-syntax-highlighting zsh-history-substring-search)
+  if [[ -r "$ZSH/custom/themes/powerlevel10k/powerlevel10k.zsh-theme" ]]; then
+    ZSH_THEME="powerlevel10k/powerlevel10k"
+  else
+    ZSH_THEME=""
+  fi
+  # zsh-syntax-highlighting debe ser el último plugin externo.
+  plugins=(git colored-man-pages extract sudo zsh-autosuggestions zsh-history-substring-search zsh-syntax-highlighting)
   source "$ZSH/oh-my-zsh.sh"
 fi
-
-P10K_THEME="$HOME/.oh-my-zsh/custom/themes/powerlevel10k/powerlevel10k.zsh-theme"
-[[ -f "$P10K_THEME" ]] && source "$P10K_THEME"
-unset P10K_THEME
 
 HISTFILE="$HOME/.zsh_history"
 HISTSIZE=100000
@@ -24,11 +26,21 @@ zshaddhistory() {
   whence ${words[$j]} >/dev/null 2>&1 || return 1
 }
 
-bindkey '^[[A' history-substring-search-up
-bindkey '^[[B' history-substring-search-down
+if (( $+functions[history-substring-search-up] )); then
+  bindkey '^[[A' history-substring-search-up
+  bindkey '^[[B' history-substring-search-down
+fi
 
 if command -v fzf >/dev/null 2>&1; then
-  source <(fzf --zsh)
+  if fzf --help 2>&1 | command grep -q -- '--zsh'; then
+    source <(fzf --zsh)
+  elif [[ -r /usr/share/fzf/key-bindings.zsh ]]; then
+    source /usr/share/fzf/key-bindings.zsh
+    [[ -r /usr/share/fzf/completion.zsh ]] && source /usr/share/fzf/completion.zsh
+  elif [[ -r /opt/homebrew/opt/fzf/shell/key-bindings.zsh ]]; then
+    source /opt/homebrew/opt/fzf/shell/key-bindings.zsh
+    [[ -r /opt/homebrew/opt/fzf/shell/completion.zsh ]] && source /opt/homebrew/opt/fzf/shell/completion.zsh
+  fi
   export FZF_DEFAULT_OPTS="
     --layout=reverse
     --color=fg:#F8F8F2,bg:#282A36,hl:#BD93F9
@@ -36,7 +48,9 @@ if command -v fzf >/dev/null 2>&1; then
     --color=info:#FFB86C,prompt:#50FA7B,pointer:#FF79C6
     --color=marker:#FF79C6,spinner:#F1FA8C,header:#6272A4
   "
-  export FZF_CTRL_T_OPTS="--preview 'bat --color=always --style=numbers --line-range=:500 {} 2>/dev/null'"
+  if command -v bat >/dev/null 2>&1; then
+    export FZF_CTRL_T_OPTS="--preview 'bat --color=always --style=numbers --line-range=:500 {} 2>/dev/null'"
+  fi
   if command -v fd >/dev/null 2>&1; then
     export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git'
     export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
