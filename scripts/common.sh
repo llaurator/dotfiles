@@ -49,10 +49,10 @@ deploy_stow_packages(){
 }
 configure_git_identity() {
   local git_name git_email answer name email local_config
-  git_name="$(git config --global --get user.name 2>/dev/null || true)"
-  git_email="$(git config --global --get user.email 2>/dev/null || true)"
+  git_name="$(git config --get user.name 2>/dev/null || true)"
+  git_email="$(git config --get user.email 2>/dev/null || true)"
   if [[ -n "$git_name" && -n "$git_email" ]]; then
-    success 'Se conserva la identidad Git existente.'
+    success 'Identidad Git ya configurada.'
     return 0
   fi
   if [[ "$ASSUME_YES" -eq 1 ]]; then
