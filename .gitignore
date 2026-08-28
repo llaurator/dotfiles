@@ -9,13 +9,16 @@
 *.p12
 *.pfx
 
-# SSH secrets and runtime data
-ssh/.ssh/id_*
-ssh/.ssh/known_hosts
-ssh/.ssh/known_hosts.old
-ssh/.ssh/authorized_keys
-ssh/.ssh/agent/
-ssh/.ssh/*.sock
+# SSH: version only the generic config and empty examples.
+ssh/.ssh/*
+!ssh/.ssh/config
+!ssh/.ssh/config.d/
+ssh/.ssh/config.d/*
+!ssh/.ssh/config.d/*.example
+
+# Machine-local Git identity
+git/.config/git/local.gitconfig
+.config/git/local.gitconfig
 
 # Local dotfiles state
 .config/dotfiles/profile
