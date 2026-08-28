@@ -134,3 +134,14 @@ git diff --check
 Si están disponibles, añade `shellcheck install.sh scripts/*.sh` y `jq empty` sobre
 `vscode/.config/dotfiles/vscode/settings.json`, además del dry-run temporal anterior.
 `./install.sh --help` solo muestra ayuda; no instala nada.
+
+## Releases
+
+Cada push a `main` ejecuta semantic-release en GitHub Actions. Los commits `feat` generan
+una versión minor; `fix`, `perf`, `security` y `revert`, una patch; y cualquier breaking
+change, una major. `docs`, `refactor`, `chore`, `build`, `ci` y `test` aparecen en las notas
+cuando existe una release, pero no crean una versión por sí solos.
+
+El workflow crea el tag `vX.Y.Z`, actualiza `CHANGELOG.md`, confirma ese cambio con
+`[skip ci]` y publica la GitHub Release usando únicamente el `GITHUB_TOKEN` del repositorio.
+No publica paquetes npm y no se ejecuta para pull requests.
