@@ -4,6 +4,7 @@
 [core]
     editor = nano
     autocrlf = input
+    pager = less -FRX
 
 [color]
     ui = auto
@@ -20,4 +21,5 @@
 [rerere]
     enabled = true
 
-# user.name / user.email quedan fuera del repo común.
+[include]
+    path = ~/.config/git/local.gitconfig
