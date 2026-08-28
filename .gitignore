@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Secrets / credentials
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# SSH secrets
+ssh/.ssh/id_*
+ssh/.ssh/known_hosts
+ssh/.ssh/known_hosts.old
+ssh/.ssh/authorized_keys
+
+# Editors
+*.swp
+*~
