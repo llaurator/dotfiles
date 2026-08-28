@@ -1,2 +1,18 @@
 #!/usr/bin/env bash
-install_system_packages(){ sudo dnf install -y git stow zsh fzf fd-find zoxide eza bat ripgrep btop grc direnv; if ! command -v fd >/dev/null 2>&1 && command -v fdfind >/dev/null 2>&1; then mkdir -p "$HOME/.local/bin"; ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"; fi; }
+install_system_packages() {
+  local package
+  local optional_packages=(fzf fd-find zoxide eza bat ripgrep btop grc direnv)
+  sudo dnf install -y git stow zsh
+  for package in "${optional_packages[@]}"; do
+    if ! sudo dnf install -y "$package"; then
+      warn "Paquete opcional no disponible mediante dnf: $package"
+    fi
+  done
+  if ! command_exists fd && command_exists fdfind; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sfn "$(command -v fdfind)" "$HOME/.local/bin/fd"
+  fi
+  if [[ "$PROFILE" != server ]] && ! command_exists code; then
+    warn 'VS Code no está en los repositorios Fedora estándar; se configurará cuando el comando code exista.'
+  fi
+}

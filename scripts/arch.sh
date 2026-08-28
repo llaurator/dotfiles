@@ -1,2 +1,6 @@
 #!/usr/bin/env bash
-install_system_packages(){ sudo pacman -Syu --needed --noconfirm git stow zsh fzf fd zoxide eza bat ripgrep btop grc git-delta direnv; }
+install_system_packages() {
+  local packages=(git stow zsh fzf fd zoxide eza bat ripgrep btop grc git-delta direnv)
+  [[ "$PROFILE" == server ]] || packages+=(code)
+  sudo pacman -S --needed --noconfirm "${packages[@]}"
+}

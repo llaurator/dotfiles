@@ -35,6 +35,9 @@ done
 detect_platform
 print_banner
 
+if [[ "$ASSUME_YES" -eq 1 && -z "$PROFILE" ]]; then
+    die 'El modo --yes requiere --profile personal|work|server.'
+fi
 [[ -n "$PROFILE" ]] || PROFILE="$(choose_profile)"
 validate_profile "$PROFILE"
 
@@ -74,6 +77,8 @@ source "$ROOT_DIR/scripts/common.sh"
 install_common_components
 write_profile "$PROFILE"
 deploy_stow_packages "$PROFILE"
+configure_git_identity
+configure_vscode "$PROFILE"
 ensure_zsh_shell
 
 success "Instalación terminada."

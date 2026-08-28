@@ -37,4 +37,5 @@ print_plan(){
   printf '%sSe instalará:%s\n' "$BOLD" "$RESET"
   printf '  ✓ zsh\n  ✓ git\n  ✓ stow\n  ✓ fzf\n  ✓ zoxide\n  ✓ eza\n  ✓ bat\n  ✓ ripgrep\n  ✓ btop\n  ✓ grc\n  ✓ Oh My Zsh\n  ✓ Powerlevel10k\n  ✓ plugins Zsh\n'
   case "$1" in personal) printf '  ✓ configuración SSH cliente\n' ;; work) printf '  ✓ configuración SSH cliente\n  ✓ perfil de trabajo\n' ;; server) printf '  ✓ perfil ligero de servidor\n' ;; esac
+  case "$1" in personal|work) printf '  ✓ VS Code (si está disponible) y extensiones mínimas\n' ;; esac
 }
