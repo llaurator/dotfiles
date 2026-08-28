@@ -9,12 +9,25 @@
 *.p12
 *.pfx
 
-# SSH secrets
+# SSH secrets and runtime data
 ssh/.ssh/id_*
 ssh/.ssh/known_hosts
 ssh/.ssh/known_hosts.old
 ssh/.ssh/authorized_keys
+ssh/.ssh/agent/
+ssh/.ssh/*.sock
 
-# Editors
+# Local dotfiles state
+.config/dotfiles/profile
+.config/dotfiles/config
+
+# Editors / temp
 *.swp
+*.swo
 *~
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc

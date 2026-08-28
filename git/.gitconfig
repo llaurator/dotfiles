@@ -1,0 +1,23 @@
+[init]
+    defaultBranch = main
+
+[core]
+    editor = nano
+    autocrlf = input
+
+[color]
+    ui = auto
+
+[fetch]
+    prune = true
+
+[pull]
+    ff = only
+
+[push]
+    autoSetupRemote = true
+
+[rerere]
+    enabled = true
+
+# user.name / user.email quedan fuera del repo común.

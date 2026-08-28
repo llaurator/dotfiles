@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[0;33m'; CYAN=$'\033[0;36m'; MAGENTA=$'\033[0;35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+info(){ printf '%sℹ%s  %s\n' "$CYAN" "$RESET" "$*"; }
+success(){ printf '%s✓%s  %s\n' "$GREEN" "$RESET" "$*"; }
+warn(){ printf '%s!%s  %s\n' "$YELLOW" "$RESET" "$*"; }
+die(){ printf '%s✗%s  %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
+command_exists(){ command -v "$1" >/dev/null 2>&1; }
+print_banner(){ printf '%s%s' "$MAGENTA" "$BOLD"; cat <<'BANNER'
+╭─────────────────────────────────────────╮
+│          🦇 DOTFILES INSTALLER          │
+╰─────────────────────────────────────────╯
+BANNER
+printf '%s' "$RESET"; }
+detect_platform(){
+  DOTFILES_ARCH="$(uname -m)"; DOTFILES_HOST="$(hostname -s 2>/dev/null || hostname)"
+  case "$(uname -s)" in
+    Darwin) DOTFILES_OS="macos"; DOTFILES_DISTRO="macos" ;;
+    Linux)
+      DOTFILES_OS="linux"
+      if command_exists pacman; then DOTFILES_DISTRO="arch"
+      elif command_exists dnf; then DOTFILES_DISTRO="fedora"
+      elif command_exists apt-get; then DOTFILES_DISTRO="debian"
+      else DOTFILES_DISTRO="unknown"; fi ;;
+    *) die "Sistema operativo no soportado: $(uname -s)" ;;
+  esac
+  export DOTFILES_OS DOTFILES_DISTRO DOTFILES_ARCH DOTFILES_HOST
+}
+choose_profile(){
+  local choice
+  printf '%s\n' 'Selecciona el perfil:' >&2
+  printf '  1) Personal\n  2) Trabajo\n  3) Servidor / CT / VM\n\n' >&2
+  read -r -p '> ' choice
+  case "$choice" in 1|personal) echo personal ;; 2|work|trabajo) echo work ;; 3|server|servidor) echo server ;; *) die 'Perfil no válido' ;; esac
+}
+validate_profile(){ case "$1" in personal|work|server) ;; *) die "Perfil no válido: $1" ;; esac; }
+print_plan(){
+  printf '%sSe instalará:%s\n' "$BOLD" "$RESET"
+  printf '  ✓ zsh\n  ✓ git\n  ✓ stow\n  ✓ fzf\n  ✓ zoxide\n  ✓ eza\n  ✓ bat\n  ✓ ripgrep\n  ✓ btop\n  ✓ grc\n  ✓ Oh My Zsh\n  ✓ Powerlevel10k\n  ✓ plugins Zsh\n'
+  case "$1" in personal) printf '  ✓ configuración SSH cliente\n' ;; work) printf '  ✓ configuración SSH cliente\n  ✓ perfil de trabajo\n' ;; server) printf '  ✓ perfil ligero de servidor\n' ;; esac
+}

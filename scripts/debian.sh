@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+install_system_packages(){ sudo apt-get update; sudo apt-get install -y git stow zsh fzf fd-find zoxide bat ripgrep btop grc direnv; mkdir -p "$HOME/.local/bin"; if ! command -v fd >/dev/null 2>&1 && command -v fdfind >/dev/null 2>&1; then ln -sf "$(command -v fdfind)" "$HOME/.local/bin/fd"; fi; if ! command -v bat >/dev/null 2>&1 && command -v batcat >/dev/null 2>&1; then ln -sf "$(command -v batcat)" "$HOME/.local/bin/bat"; fi; command -v eza >/dev/null 2>&1 || warn 'eza no está disponible mediante apt en esta versión; ls seguirá funcionando.'; }
