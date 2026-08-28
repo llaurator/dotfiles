@@ -2,7 +2,7 @@
 install_system_packages() {
   local package
   local optional_packages=(fzf fd-find zoxide eza bat ripgrep btop grc direnv)
-  sudo dnf install -y git stow zsh
+  sudo dnf install -y git stow zsh jq
   for package in "${optional_packages[@]}"; do
     if ! sudo dnf install -y "$package"; then
       warn "Paquete opcional no disponible mediante dnf: $package"

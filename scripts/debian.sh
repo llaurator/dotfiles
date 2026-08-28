@@ -4,7 +4,7 @@ install_system_packages() {
   local optional_packages=(fzf fd-find zoxide bat ripgrep btop grc direnv eza)
   local available_packages=()
   sudo apt-get update
-  sudo apt-get install -y git stow zsh
+  sudo apt-get install -y git stow zsh jq
   for package in "${optional_packages[@]}"; do
     if apt-cache show --no-all-versions "$package" >/dev/null 2>&1; then
       available_packages+=("$package")

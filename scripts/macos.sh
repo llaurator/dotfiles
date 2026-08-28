@@ -10,7 +10,7 @@ install_system_packages() {
   fi
   [[ -n "$brew_bin" ]] || die 'Homebrew no está instalado.'
   eval "$("$brew_bin" shellenv)"
-  brew install git stow fzf fd zoxide eza bat ripgrep btop grc git-delta direnv
+  brew install git stow jq fzf fd zoxide eza bat ripgrep btop grc git-delta direnv
   if [[ "$PROFILE" != server ]] && ! command_exists code; then
     brew install --cask visual-studio-code
   fi
