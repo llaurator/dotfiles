@@ -136,6 +136,11 @@ merge_vscode_settings() {
       warn 'VS Code: no se pudieron preservar los permisos del settings.json local.'
       return 1
     }
+    if cmp -s "$temporary" "$settings_target"; then
+      rm -f "$temporary"
+      success 'VS Code: settings.json ya está actualizado.'
+      return 0
+    fi
     if [[ ! -e "$backup" && ! -L "$backup" ]] && ! cp -p "$settings_target" "$backup"; then
       rm -f "$temporary"
       warn "VS Code: no se pudo crear el backup $backup; no se modifica el original."
