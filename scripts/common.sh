@@ -40,6 +40,11 @@ deploy_stow_packages(){
   done
   if [[ "$profile" != server ]]; then
     chmod 700 "$HOME/.ssh" "$HOME/.ssh/config.d"
+    if ! compgen -G "$HOME/.ssh/config.d/*.conf" >/dev/null; then
+      info 'SSH configurado.'
+      printf '  No hay hosts locales en ~/.ssh/config.d/*.conf\n'
+      printf '  Puedes copiar/adaptar los ejemplos incluidos en el repositorio.\n'
+    fi
   fi
 }
 configure_git_identity() {
