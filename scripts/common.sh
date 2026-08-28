@@ -170,6 +170,7 @@ vscode_extension_name() {
   case "$1" in
     esbenp.prettier-vscode) printf 'Prettier' ;;
     charliermarsh.ruff) printf 'Ruff' ;;
+    ms-python.vscode-python-envs) printf 'Python Environments' ;;
     MS-CEINTL.vscode-language-pack-es) printf 'Spanish Language Pack' ;;
     dracula-theme.theme-dracula) printf 'Dracula Official' ;;
     *) printf '%s' "$1" ;;

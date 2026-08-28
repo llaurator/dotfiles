@@ -92,13 +92,14 @@ están ignorados. Revisa siempre `git status` antes de confirmar cambios.
 
 ## VS Code
 
-La lista versionada contiene exclusivamente Prettier, Ruff, Spanish Language Pack y
-Dracula Official. Las extensiones ya instaladas se detectan sin distinguir mayúsculas y
-minúsculas, y solo se invoca la instalación para las ausentes. `settings.json` activa formato
-al guardar, Prettier para JS, TS, JSON, CSS y HTML, Ruff para Python, limpieza de espacios,
-newline final, regla a 100, minimapa desactivado y `Dracula Theme`. El idioma puede
-seleccionarse con “Configure Display Language”; no se mantiene un fichero de locale
-dependiente de versión.
+La lista versionada contiene exclusivamente Prettier, Ruff, Python Environments, Spanish
+Language Pack y Dracula Official. Python Environments descubre y permite seleccionar los
+entornos virtuales de los proyectos Python, incluidos los directorios `.venv`. Las extensiones
+ya instaladas se detectan sin distinguir mayúsculas y minúsculas, y solo se invoca la
+instalación para las ausentes. `settings.json` activa formato al guardar, Prettier para JS, TS,
+JSON, CSS y HTML, Ruff para Python, limpieza de espacios, newline final, regla a 100, minimapa
+desactivado y `Dracula Theme`. El idioma puede seleccionarse con “Configure Display
+Language”; no se mantiene un fichero de locale dependiente de versión.
 
 En macOS se instala el cask `visual-studio-code`; en Arch, el paquete oficial `code`.
 Fedora y Debian/Ubuntu no reciben repositorios Microsoft: si `code` falta, se avisa y se

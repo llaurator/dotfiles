@@ -1,4 +1,5 @@
 esbenp.prettier-vscode
 charliermarsh.ruff
+ms-python.vscode-python-envs
 MS-CEINTL.vscode-language-pack-es
 dracula-theme.theme-dracula
