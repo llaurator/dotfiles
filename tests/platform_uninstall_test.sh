@@ -45,6 +45,8 @@ prepare_common_commands() {
   # shellcheck disable=SC2016
   printf '%s\n' '#!/usr/bin/env bash' 'printf "forbidden chsh\n" >> "$PLATFORM_FORBIDDEN_LOG"; exit 99' > "$bin/chsh"
   # shellcheck disable=SC2016
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "forbidden sudo\n" >> "$PLATFORM_FORBIDDEN_LOG"; exit 99' > "$bin/sudo"
+  # shellcheck disable=SC2016
   printf '%s\n' '#!/usr/bin/env bash' 'printf "forbidden fc-cache\n" >> "$PLATFORM_FORBIDDEN_LOG"; exit 99' > "$bin/fc-cache"
   # Doble mínimo de Stow para crear los enlaces de la instalación fixture.
   # shellcheck disable=SC2016
@@ -55,8 +57,8 @@ prepare_common_commands() {
     'for argument in "$@"; do case "$argument" in --dir=*) directory=${argument#--dir=};; --target=*) target_root=${argument#--target=};; --restow|--no-folding) ;; *) package=$argument;; esac; done' \
     'while IFS= read -r -d "" source; do relative=${source#"$directory/$package/"}; target=$target_root/$relative; mkdir -p "${target%/*}"; [[ -e "$target" || -L "$target" ]] || ln -s "$source" "$target"; done < <(find "$directory/$package" -type f -print0)' \
     > "$bin/stow"
-  chmod +x "$bin/zsh" "$bin/chsh" "$bin/fc-cache" "$bin/stow"
-  for command_name in awk bash cat chmod cksum cmp cp cut date dirname find git grep head jq ln mkdir \
+  chmod +x "$bin/zsh" "$bin/chsh" "$bin/sudo" "$bin/fc-cache" "$bin/stow"
+  for command_name in awk bash cat chmod cksum cmp cp cut date dirname find git grep head id jq ln mkdir \
     mktemp mv readlink sed sha256sum sort stat tail tar tr wc xargs; do
     command_path="$(command -v "$command_name")"
     ln -s "$command_path" "$bin/$command_name"

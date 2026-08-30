@@ -288,7 +288,7 @@ ensure_zsh_shell(){
   current="$(current_login_shell)"
   if [[ "$current" == "$zsh_path" ]]; then success 'Zsh ya es el shell por defecto.'; return; fi
   info 'Configurando Zsh como shell por defecto...'
-  if chsh -s "$zsh_path"; then
+  if privileged_chsh "$zsh_path"; then
     record_shell_changed "$zsh_path"
     success "Shell por defecto cambiado a $zsh_path"
     info 'El cambio será efectivo al iniciar una nueva sesión de usuario.'

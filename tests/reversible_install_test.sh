@@ -445,7 +445,7 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'if [[ -n "${PACKAGE_FAILURE_FILE:-}" && -e "$PACKAGE_FAILURE_FILE" ]]; then exit 9; fi' \
   'for argument in "$@"; do case "$argument" in zsh|tool-a) /usr/bin/rm -f -- "$PACKAGE_STATE_DIR/$argument";; esac; done' > "$FAKE_BIN/dnf"
 # shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$FAKE_BIN/sudo"
+printf '%s\n' '#!/usr/bin/env bash' '[[ "${1:-}" == -v ]] && exit 0' 'exec "$@"' > "$FAKE_BIN/sudo"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' \
   'case "$*" in *"remote get-url origin"*) printf "https://github.com/example/resume.git\n";;' \

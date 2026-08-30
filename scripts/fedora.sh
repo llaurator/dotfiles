@@ -2,9 +2,9 @@
 install_system_packages() {
   local package
   get_system_packages
-  run_tracked_package_transaction system-required sudo dnf install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
+  run_tracked_package_transaction system-required run_privileged dnf install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
   for package in "${SYSTEM_OPTIONAL_PACKAGES[@]}"; do
-    if ! run_tracked_package_transaction "optional-$package" sudo dnf install -y "$package"; then
+    if ! run_tracked_package_transaction "optional-$package" run_privileged dnf install -y "$package"; then
       warn "Paquete opcional no disponible mediante dnf: $package"
     fi
   done
@@ -38,7 +38,7 @@ install_fedora_vscode() {
       'gpgcheck=1' \
       'gpgkey=https://packages.microsoft.com/keys/microsoft.asc' > "$repo_tmp"
     chmod 644 "$repo_tmp"
-    sudo install -o root -g root -m 0644 "$repo_tmp" "$repo_file" || { rm -f -- "$repo_tmp"; die 'No se pudo instalar el repositorio oficial de VS Code.'; }
+    run_privileged install -o root -g root -m 0644 "$repo_tmp" "$repo_file" || { rm -f -- "$repo_tmp"; die 'No se pudo instalar el repositorio oficial de VS Code.'; }
     rm -f -- "$repo_tmp"
   fi
   record_fedora_vscode_repository_after
@@ -53,9 +53,9 @@ install_fedora_vscode() {
     rm -f -- "$key_tmp"
     die 'La clave oficial de Microsoft no coincide con la huella fijada.'
   fi
-  sudo rpm --import "$key_tmp" || { rm -f -- "$key_tmp"; die 'No se pudo importar la clave oficial de Microsoft.'; }
+  run_privileged rpm --import "$key_tmp" || { rm -f -- "$key_tmp"; die 'No se pudo importar la clave oficial de Microsoft.'; }
   rm -f -- "$key_tmp"
-  run_tracked_package_transaction vscode sudo dnf install -y code
+  run_tracked_package_transaction vscode run_privileged dnf install -y code
 }
 # shellcheck disable=SC2034 # Consumida por scripts/state.sh después de source.
 get_system_packages() { SYSTEM_REQUIRED_PACKAGES=(git stow zsh jq); SYSTEM_OPTIONAL_PACKAGES=(fzf fd-find zoxide eza bat ripgrep btop grc direnv); SYSTEM_PACKAGES=("${SYSTEM_REQUIRED_PACKAGES[@]}" "${SYSTEM_OPTIONAL_PACKAGES[@]}"); if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]]; then SYSTEM_PACKAGES+=(code); fi; }

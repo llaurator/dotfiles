@@ -1365,7 +1365,7 @@ restore_login_shell() {
   fi
   [[ "$current" == "$after" ]] || return 0
   [[ "$checkpoint" == started ]] || restore_checkpoint_set shell_restore login_shell started
-  chsh -s "$before" || die 'No se pudo restaurar el shell de login.'
+  privileged_chsh "$before" || die 'No se pudo restaurar el shell de login.'
   restore_checkpoint_set shell_restore login_shell completed
   restore_log_append shell-restored "$before"
 }
@@ -1413,9 +1413,9 @@ remove_cycle_packages() {
   fi
   [[ "$checkpoint" == started ]] || restore_checkpoint_set packages_remove system started
   case "$manager" in
-    dnf) sudo dnf remove -y --no-autoremove "${packages[@]}" ;;
-    pacman) sudo pacman -R --noconfirm "${packages[@]}" ;;
-    apt) sudo apt-get remove -y "${packages[@]}" ;;
+    dnf) run_privileged dnf remove -y --no-autoremove "${packages[@]}" ;;
+    pacman) run_privileged pacman -R --noconfirm "${packages[@]}" ;;
+    apt) run_privileged apt-get remove -y "${packages[@]}" ;;
     brew) brew uninstall "${packages[@]}" ;;
     *) die 'Gestor de paquetes desconocido en baseline.' ;;
   esac || die 'No se pudieron retirar todos los paquetes registrados; el ciclo queda activo.'
@@ -1438,7 +1438,7 @@ remove_fedora_vscode_repository() {
   fi
   if fedora_vscode_repository_is_removable; then
     restore_checkpoint_set repository_remove "$FEDORA_VSCODE_REPO_FILE" started
-    sudo rm -- "$FEDORA_VSCODE_REPO_FILE" || die 'No se pudo retirar el repositorio de VS Code creado por el ciclo.'
+    run_privileged rm -- "$FEDORA_VSCODE_REPO_FILE" || die 'No se pudo retirar el repositorio de VS Code creado por el ciclo.'
     [[ ! -e "$FEDORA_VSCODE_REPO_FILE" && ! -L "$FEDORA_VSCODE_REPO_FILE" ]] ||
       die 'El repositorio de VS Code continúa presente; el rollback queda pendiente.'
     restore_checkpoint_set repository_remove "$FEDORA_VSCODE_REPO_FILE" completed

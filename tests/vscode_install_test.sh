@@ -70,7 +70,7 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'exit 0' > "$FAKE_BIN/dnf"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' \
-  'if [[ "$1" == install ]]; then /usr/bin/install -m 0644 "${@: -2:1}" "${@: -1}"; else exec "$@"; fi' \
+  'if [[ "${1:-}" == -v ]]; then exit 0; elif [[ "$1" == install ]]; then /usr/bin/install -m 0644 "${@: -2:1}" "${@: -1}"; else exec "$@"; fi' \
   > "$FAKE_BIN/sudo"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' \

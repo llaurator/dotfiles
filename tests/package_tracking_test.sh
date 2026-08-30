@@ -37,7 +37,7 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'if [[ " $* " == *" remove -y --no-autoremove "* ]]; then for package in "$@"; do case "$package" in A|B|C) grep -Fvx -- "$package" "$HOME/installed.txt" > "$HOME/installed.tmp" || true; mv "$HOME/installed.tmp" "$HOME/installed.txt";; esac; done; exit; fi' \
   'exit 99' > "$FAKE_BIN/dnf"
 # shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$FAKE_BIN/sudo"
+printf '%s\n' '#!/usr/bin/env bash' '[[ "${1:-}" == -v ]] && exit 0' 'exec "$@"' > "$FAKE_BIN/sudo"
 chmod +x "$FAKE_BIN/rpm" "$FAKE_BIN/dnf" "$FAKE_BIN/sudo"
 
 get_system_packages() { SYSTEM_PACKAGES=(A B C); }

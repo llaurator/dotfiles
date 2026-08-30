@@ -51,8 +51,9 @@ El modo interactivo ofrece `personal`, `work` y `server`. Para automatización:
 
 `--yes` requiere `--profile` y omite las preguntas propias del instalador; no activa por sí
 solo la instalación opcional de VS Code. Para automatizar ese opt-in en `personal`/`work`
-se usa `--install-vscode`. `sudo`, el gestor de paquetes, `chsh` o macOS aún pueden pedir
-autorización. El perfil se guarda en `~/.config/dotfiles/profile` y `.zshrc` lo carga en cada
+se usa `--install-vscode`. Cuando hacen falta privilegios, el instalador valida `sudo` una
+sola vez y reutiliza su timestamp normal tanto para el gestor como para `chsh`; no mantiene
+el timestamp artificialmente. El perfil se guarda en `~/.config/dotfiles/profile` y `.zshrc` lo carga en cada
 sesión. `personal` y `work` incluyen la capa opcional `development.zsh`; `server` evita SSH
 cliente del repositorio, VS Code y configuración de escritorio.
 

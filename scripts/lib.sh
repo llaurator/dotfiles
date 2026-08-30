@@ -3,6 +3,7 @@ DOTFILES_OS=''
 DOTFILES_DISTRO=''
 DOTFILES_ARCH=''
 DOTFILES_HOST=''
+SUDO_VALIDATED=0
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[0;33m'; CYAN=$'\033[0;36m'; MAGENTA=$'\033[0;35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
 info(){ printf '%sℹ%s  %s\n' "$CYAN" "$RESET" "$*"; }
@@ -10,6 +11,25 @@ success(){ printf '%s✓%s  %s\n' "$GREEN" "$RESET" "$*"; }
 warn(){ printf '%s!%s  %s\n' "$YELLOW" "$RESET" "$*"; }
 die(){ printf '%s✗%s  %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 command_exists(){ command -v "$1" >/dev/null 2>&1; }
+is_root_user(){ local uid; uid="$(id -u)" || return 1; [[ "$uid" == 0 ]]; }
+validate_sudo_once(){
+  [[ "$SUDO_VALIDATED" -eq 0 ]] || return 0
+  is_root_user && { SUDO_VALIDATED=1; return 0; }
+  command_exists sudo || { warn 'Se necesitan privilegios y sudo no está disponible.'; return 1; }
+  info 'Validando privilegios para la fase que modifica el sistema...'
+  sudo -v || { warn 'No se pudieron validar los privilegios con sudo.'; return 1; }
+  SUDO_VALIDATED=1
+}
+run_privileged(){
+  if is_root_user; then "$@"; return; fi
+  validate_sudo_once || return 1
+  sudo "$@"
+}
+privileged_chsh(){
+  local shell_path="$1" target_user
+  target_user="$(id -un)" || return 1
+  run_privileged chsh -s "$shell_path" "$target_user"
+}
 print_banner(){ printf '%s%s' "$MAGENTA" "$BOLD"; cat <<'BANNER'
 ╭─────────────────────────────────────────╮
 │          🦇 DOTFILES INSTALLER          │
