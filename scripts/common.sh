@@ -4,6 +4,27 @@ install_common_components(){
   install_resolved_zsh_components
 }
 profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
+meslo_nerd_font_candidates() { printf '%s\n' 'MesloLGS Nerd Font' 'MesloLGS NF'; }
+meslo_nerd_font_family() {
+  local candidate family
+  command_exists fc-list && command_exists fc-match || return 1
+  while IFS= read -r candidate; do
+    family="$(fc-match --format '%{family}\n' "$candidate" 2>/dev/null | sed -n '1p')" || continue
+    [[ "$family" == "$candidate" ]] && { printf '%s' "$family"; return 0; }
+  done < <(meslo_nerd_font_candidates)
+  return 1
+}
+meslo_nerd_font_resolution() {
+  local family
+  if family="$(meslo_nerd_font_family)"; then
+    if [[ "${MESLO_FONT_ORIGIN:-}" == managed && "${MESLO_FONT_FAMILY:-}" == "$family" ]]; then printf 'managed\t%s\n' "$family"; else printf 'system\t%s\n' "$family"; fi
+  else
+    printf 'missing\tMesloLGS Nerd Font\n'
+  fi
+}
+meslo_nerd_font_available() {
+  meslo_nerd_font_family >/dev/null
+}
 upstream_component_status() { local name="$1" component="$2" state; IFS=$'\t' read -r state _ < <(resolve_zsh_component "$component"); case "$state" in managed) printf '  ✓ %s (gestionado)\n' "$name";; external) printf '  ✓ %s (externo)\n' "$name";; missing) printf '  + %s (pendiente)\n' "$name";; esac; }
 print_install_preflight() {
   local profile="$1" package
@@ -21,6 +42,11 @@ print_install_preflight() {
   upstream_component_status 'zsh-autosuggestions' autosuggestions
   upstream_component_status 'zsh-syntax-highlighting' syntax
   upstream_component_status 'zsh-history-substring-search' history
+  if profile_uses_nerd_font "$profile"; then
+    printf '\nFuente:\n'
+    IFS=$'\t' read -r font_state font_family < <(meslo_nerd_font_resolution)
+    if [[ "$font_state" == system ]]; then printf '  ✓ %s (sistema)\n' "$font_family"; else printf '  + MesloLGS Nerd Font (se instalará)\n'; fi
+  fi
   if (( ${#CONFLICT_RELS[@]} )); then
     printf '\nConflictos Stow:\n'
     for package in "${CONFLICT_RELS[@]}"; do printf '  ! ~/%s ya existe y no está gestionado por dotfiles\n' "$package"; done
@@ -77,6 +103,7 @@ select_konsole_configure() {
 }
 konsole_font_family() {
   local font_file="$HOME/.local/share/fonts/MesloLGSNerdFont-Regular.ttf" family
+  if [[ -n "${MESLO_FONT_FAMILY:-}" ]]; then printf '%s' "$MESLO_FONT_FAMILY"; return 0; fi
   command_exists fc-query || return 1
   [[ -f "$font_file" && ! -L "$font_file" ]] || return 1
   family="$(fc-query --format '%{family}\n' "$font_file" 2>/dev/null | sed -n '1p')"
@@ -156,13 +183,20 @@ configure_konsole() {
   success 'Konsole configurado con Dracula y MesloLGS Nerd Font para nuevas ventanas/sesiones.'
 }
 install_nerd_font() {
-  local font_dir tmp_dir name target before fingerprint expected url downloaded
+  local font_dir tmp_dir name target before fingerprint expected url downloaded font_state font_family
   local base_url='https://raw.githubusercontent.com/ryanoasis/nerd-fonts/v3.5.1/patched-fonts/Meslo/S'
   local -a missing_fonts=()
   [[ "${DOTFILES_SKIP_FONT:-0}" != 1 ]] || { info 'Fuente omitida por el entorno de pruebas.'; return 0; }
+  IFS=$'\t' read -r font_state font_family < <(meslo_nerd_font_resolution)
+  if [[ "$font_state" == system ]]; then
+    MESLO_FONT_FAMILY="$font_family"; MESLO_FONT_ORIGIN=system
+    success "$font_family ya está disponible mediante fontconfig; se conserva como externa."
+    return 0
+  fi
   if [[ "$DOTFILES_OS" == macos ]]; then
     if brew list --cask font-meslo-lg-nerd-font >/dev/null 2>&1; then
       [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -q '^homebrew-cask:' "$ACTIVE_CYCLE_DIR/fonts.tsv" && printf 'homebrew-cask:font-meslo-lg-nerd-font\talready_present\t-\n' >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+      MESLO_FONT_FAMILY='MesloLGS Nerd Font'; MESLO_FONT_ORIGIN=system
       success 'MesloLGS Nerd Font ya instalada.'; return
     fi
     brew install --cask font-meslo-lg-nerd-font
@@ -209,6 +243,8 @@ install_nerd_font() {
     rm -rf -- "$tmp_dir"
     if command_exists fc-cache; then fc-cache -f "$font_dir" >/dev/null 2>&1 || warn 'fontconfig no pudo actualizar la caché de usuario.'; else warn 'fontconfig no está disponible; actualiza la caché de fuentes manualmente.'; fi
   fi
+  if font_family="$(meslo_nerd_font_family)"; then MESLO_FONT_FAMILY="$font_family"; else MESLO_FONT_FAMILY='MesloLGS Nerd Font'; fi
+  MESLO_FONT_ORIGIN=managed
   success 'MesloLGS Nerd Font instalada.'
   info 'Si los iconos no se muestran correctamente, selecciona "MesloLGS NF" como fuente en tu emulador de terminal.'
 }

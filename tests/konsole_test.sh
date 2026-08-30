@@ -72,11 +72,12 @@ record_baseline_path '.config/konsolerc' konsole_config '-'
 CONFIGURE_KONSOLE=1
 select_konsole_configure personal
 [[ "$REQUEST_CONFIGURE_KONSOLE" -eq 1 ]] || fail '--configure-konsole no activó Konsole'
+MESLO_FONT_FAMILY='MesloLGS NF'
 configure_konsole personal
 assert_file "$HOME/.local/share/konsole/Dracula.colorscheme"
 assert_file "$HOME/.local/share/konsole/Dotfiles.profile"
 grep -Fxq 'ColorScheme=Dracula' "$HOME/.local/share/konsole/Dotfiles.profile" || fail 'perfil sin Dracula'
-grep -Fxq 'Font=MesloLGS Nerd Font,10,-1,5,50,0,0,0,0,0' "$HOME/.local/share/konsole/Dotfiles.profile" || fail 'perfil sin fuente detectada'
+grep -Fxq 'Font=MesloLGS NF,10,-1,5,50,0,0,0,0,0' "$HOME/.local/share/konsole/Dotfiles.profile" || fail 'perfil sin fuente resuelta'
 grep -Fxq 'DefaultProfile=Dotfiles.profile' "$HOME/.config/konsolerc" || fail 'default no actualizado'
 grep -Fxq 'Other=keep' "$HOME/.config/konsolerc" || fail 'konsolerc no preservó otras claves'
 

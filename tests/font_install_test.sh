@@ -34,7 +34,14 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'printf "%s\n" "$url" >> "$HOME/curl.log"' > "$FAKE_BIN/curl"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >> "$HOME/fc-cache.log"' > "$FAKE_BIN/fc-cache"
-chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/fc-cache"
+# shellcheck disable=SC2016 # El doble consulta variables al ejecutarse.
+printf '%s\n' '#!/usr/bin/env bash' '[[ "${FONTCONFIG_DISABLED:-0}" != 1 ]]' > "$FAKE_BIN/fc-list"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  '[[ "${FONTCONFIG_DISABLED:-0}" != 1 ]] || exit 127' \
+  'case "$*" in *"MesloLGS Nerd Font"*) family=${FONTCONFIG_NERD_FONT_FAMILY:-Otra Nerd Font};; *"MesloLGS NF"*) family=${FONTCONFIG_NF_FAMILY:-Otra Nerd Font};; *) exit 1;; esac' \
+  'printf "%s\n" "$family"' > "$FAKE_BIN/fc-match"
+chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/fc-cache" "$FAKE_BIN/fc-list" "$FAKE_BIN/fc-match"
 
 # Las descargas ficticias conservan el nombre de la variante en su contenido;
 # este doble permite probar los hashes fijados sin incluir binarios TTF en el repo.
@@ -50,13 +57,25 @@ sha256_stream() {
   esac
 }
 
-FONT_CORRUPT_STYLE=Italic install_nerd_font > "$TEST_ROOT/corrupt.out"
+# Fontconfig usa candidatos exactos y prefiere el nombre largo.
+test "$(FONTCONFIG_NERD_FONT_FAMILY='MesloLGS Nerd Font' FONTCONFIG_NF_FAMILY='MesloLGS NF' meslo_nerd_font_family)" = 'MesloLGS Nerd Font' || fail 'no respetó la preferencia de familia'
+test "$(FONTCONFIG_NERD_FONT_FAMILY='Noto Sans' FONTCONFIG_NF_FAMILY='MesloLGS NF' meslo_nerd_font_family)" = 'MesloLGS NF' || fail 'no seleccionó MesloLGS NF tras fallback Noto Sans'
+FONTCONFIG_NERD_FONT_FAMILY='MesloLGS Nerd Fonts' FONTCONFIG_NF_FAMILY='MesloLGS NF Mono' \
+  meslo_nerd_font_available && fail 'una familia parecida contó como Meslo exacta'
+FONTCONFIG_NERD_FONT_FAMILY='Noto Sans' FONTCONFIG_NF_FAMILY='MesloLGS NF' install_nerd_font > "$TEST_ROOT/external.out"
+[[ "$MESLO_FONT_FAMILY" == 'MesloLGS NF' && "$MESLO_FONT_ORIGIN" == system ]] || fail 'no conservó la familia externa resuelta'
+[[ ! -e "$HOME/curl.log" ]] || fail 'una fuente externa provocó descargas'
+[[ "$(wc -l < "$ACTIVE_CYCLE_DIR/fonts.tsv" | tr -d ' ')" == 1 ]] || fail 'una fuente externa recibió ownership'
+[[ ! -e "$HOME/.local/share/fonts" ]] || fail 'una fuente externa creó una copia gestionada'
+FONTCONFIG_DISABLED=1 meslo_nerd_font_available && fail 'fontconfig deshabilitado contó como fuente disponible'
+
+FONT_CORRUPT_STYLE=Italic FONTCONFIG_DISABLED=1 install_nerd_font > "$TEST_ROOT/corrupt.out"
 for style in Regular Bold Italic BoldItalic; do
   [[ ! -e "$HOME/.local/share/fonts/MesloLGSNerdFont-$style.ttf" ]] || fail 'una descarga corrupta permitió una instalación parcial'
 done
 : > "$HOME/curl.log"
 
-install_nerd_font > "$TEST_ROOT/install.out"
+FONTCONFIG_DISABLED=1 install_nerd_font > "$TEST_ROOT/install.out"
 for style in Regular Bold Italic BoldItalic; do [[ -s "$HOME/.local/share/fonts/MesloLGSNerdFont-$style.ttf" ]] || fail "falta $style"; done
 [[ "$(wc -l < "$ACTIVE_CYCLE_DIR/fonts.tsv" | tr -d ' ')" == 5 ]] || fail 'tracking de fuentes incompleto'
 [[ "$(wc -l < "$HOME/curl.log" | tr -d ' ')" == 4 ]] || fail 'no se descargaron exactamente cuatro TTF'
@@ -64,7 +83,7 @@ grep -Fq '/v3.5.1/patched-fonts/Meslo/S/MesloLGSNerdFont-Regular.ttf' "$HOME/cur
 if grep -Fq 'Meslo.zip' "$HOME/curl.log"; then fail 'todavía se descarga el archivo completo de Meslo'; fi
 
 before="$(cksum "$ACTIVE_CYCLE_DIR/fonts.tsv")"
-install_nerd_font > "$TEST_ROOT/reinstall.out"
+FONTCONFIG_DISABLED=1 install_nerd_font > "$TEST_ROOT/reinstall.out"
 [[ "$(cksum "$ACTIVE_CYCLE_DIR/fonts.tsv")" == "$before" ]] || fail 'segunda instalación duplicó tracking'
 [[ "$(wc -l < "$HOME/curl.log" | tr -d ' ')" == 4 ]] || fail 'segunda instalación repitió descargas'
 
@@ -83,7 +102,7 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'if [[ "$1 $2 $3" == "uninstall --cask font-meslo-lg-nerd-font" ]]; then rm -- "$HOME/brew-font-installed"; exit; fi' \
   'exit 1' > "$FAKE_BIN/brew"
 chmod +x "$FAKE_BIN/brew"
-install_nerd_font > "$TEST_ROOT/macos-install.out"
+FONTCONFIG_DISABLED=1 install_nerd_font > "$TEST_ROOT/macos-install.out"
 [[ -e "$HOME/brew-font-installed" ]] || fail 'macOS no instaló el cask esperado'
 grep -Fq $'homebrew-cask:font-meslo-lg-nerd-font\tmissing\tinstalled_by_cycle' "$ACTIVE_CYCLE_DIR/fonts.tsv" || fail 'macOS no registró el cask'
 remove_cycle_fonts
