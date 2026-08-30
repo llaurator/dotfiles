@@ -7,6 +7,8 @@ source "$ROOT_DIR/scripts/lib.sh"
 
 PROFILE=""
 ASSUME_YES=0
+MIGRATE_BASH_HISTORY=0
+DRY_RUN=0
 
 usage() {
     cat <<'HELP'
@@ -15,10 +17,15 @@ Uso:
   ./install.sh --profile personal
   ./install.sh --profile work --yes
   ./install.sh --profile server --yes
+  ./install.sh --migrate-bash-history
+  ./install.sh --migrate-bash-history --dry-run
 
 Opciones:
   -p, --profile PROFILE   personal | work | server
   -y, --yes               No pedir confirmación
+      --migrate-bash-history
+                          Importar de forma segura ~/.bash_history en ~/.zsh_history
+      --dry-run           Mostrar estadísticas de la migración sin modificar archivos
   -h, --help              Mostrar ayuda
 HELP
 }
@@ -27,10 +34,22 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -p|--profile) [[ $# -ge 2 ]] || die "Falta el valor de --profile"; PROFILE="$2"; shift 2 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
+        --migrate-bash-history) MIGRATE_BASH_HISTORY=1; shift ;;
+        --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Opción desconocida: $1" ;;
     esac
 done
+
+if [[ "$DRY_RUN" -eq 1 && "$MIGRATE_BASH_HISTORY" -ne 1 ]]; then
+    die '--dry-run solo puede usarse con --migrate-bash-history.'
+fi
+if [[ "$MIGRATE_BASH_HISTORY" -eq 1 ]]; then
+    [[ -z "$PROFILE" ]] || die '--migrate-bash-history no puede combinarse con --profile.'
+    source "$ROOT_DIR/scripts/history.sh"
+    migrate_bash_history "$DRY_RUN"
+    exit 0
+fi
 
 detect_platform
 print_banner

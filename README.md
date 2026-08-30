@@ -135,6 +135,22 @@ Si están disponibles, añade `shellcheck install.sh scripts/*.sh` y `jq empty` 
 `vscode/.config/dotfiles/vscode/settings.json`, además del dry-run temporal anterior.
 `./install.sh --help` solo muestra ayuda; no instala nada.
 
+## Migrar el historial de Bash
+
+La migración es una operación explícita y separada de la instalación normal:
+
+```bash
+./install.sh --migrate-bash-history
+./install.sh --migrate-bash-history --dry-run
+```
+
+Importa comandos únicos de `~/.bash_history` en `~/.zsh_history`, conserva el historial Zsh
+y crea una única copia inicial `~/.zsh_history.pre-bash-migration`. El fichero Bash nunca se
+modifica. Los timestamps de Bash se descartan y las entradas nuevas se escriben en el formato
+extendido que usa `SHARE_HISTORY`. Antes de importar se omiten patrones evidentes de posibles
+secretos y solo se muestran estadísticas, nunca los comandos. Este filtro es conservador y no
+garantiza detectar todos los secretos; revisa el historial de origen antes de migrarlo.
+
 ## Releases
 
 Cada push a `main` ejecuta semantic-release en GitHub Actions. Los commits `feat` generan
