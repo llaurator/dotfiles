@@ -2,6 +2,13 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.2.0](https://github.com/llaurator/dotfiles/compare/v1.1.0...v1.2.0) (2026-08-30)
+
+### ✨ Features
+
+* **bootstrap:** add one-command remote installation ([c6653f8](https://github.com/llaurator/dotfiles/commit/c6653f8ee103cf6461aa44d3564024a5ffb77433))
+* **installer:** add reversible dotfiles installation ([3cae681](https://github.com/llaurator/dotfiles/commit/3cae681f42e0a4ee60133ef4e2f2fc51d8e77896))
+
 ## [1.1.0](https://github.com/llaurator/dotfiles/compare/v1.0.0...v1.1.0) (2026-08-30)
 
 ### ✨ Features
