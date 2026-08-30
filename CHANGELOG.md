@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.1.0](https://github.com/llaurator/dotfiles/compare/v1.0.0...v1.1.0) (2026-08-30)
+
+### ✨ Features
+
+* **history:** add Bash to Zsh history migration ([a24fcc8](https://github.com/llaurator/dotfiles/commit/a24fcc84da9f5b7859e0e2c525f413e406318219))
+
 ## 1.0.0 (2026-08-28)
 
 ### ✨ Features
