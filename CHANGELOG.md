@@ -2,6 +2,33 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.3.0](https://github.com/llaurator/dotfiles/compare/v1.2.0...v1.3.0) (2026-08-30)
+
+### ✨ Features
+
+* **terminal:** install MesloLGS Nerd Font ([45fff3d](https://github.com/llaurator/dotfiles/commit/45fff3d2cfa1d3d97246ceb9858b7245b0ddab34))
+* **vscode:** add opt-in install and Spanish locale ([1b4e7af](https://github.com/llaurator/dotfiles/commit/1b4e7af57ec7530c8ddc9d3d0ad9051ae437dfb8))
+
+### 🐛 Fixes
+
+* **installer:** initialize platform for uninstall ([615d70b](https://github.com/llaurator/dotfiles/commit/615d70b8661fa4be1685a924cba4e19c90dd40f7))
+* **installer:** make package snapshots locale independent ([78c2cb4](https://github.com/llaurator/dotfiles/commit/78c2cb492ccc6586868bbb9c7120a79c8cd5c1c0))
+* **installer:** restore system state on uninstall ([ddb9476](https://github.com/llaurator/dotfiles/commit/ddb9476ec0604c34e568ed51c9ca8214adcce910))
+* **installer:** resume interrupted restores ([8953c28](https://github.com/llaurator/dotfiles/commit/8953c28dab8c48aacb321de56bf361d14ea82964))
+* **installer:** track package transaction dependencies ([8ac8e13](https://github.com/llaurator/dotfiles/commit/8ac8e134adc2bdfc567415216397d8219338377e))
+
+### 📚 Documentation
+
+* prepare repository for public use ([9111e3c](https://github.com/llaurator/dotfiles/commit/9111e3c60c2f60dd3132d858df5cc2cfc688bcc6))
+
+### ♻️ Refactoring
+
+* **installer:** consolidate privilege prompts ([b47971f](https://github.com/llaurator/dotfiles/commit/b47971ff48aa63c2d299e55d05d412fdd821686d))
+
+### ⚡ Performance
+
+* **terminal:** reduce Nerd Font download size ([c802ecc](https://github.com/llaurator/dotfiles/commit/c802ecc6ae6a942ded1b4c8026e8c8d0dbbab09d))
+
 ## [1.2.0](https://github.com/llaurator/dotfiles/compare/v1.1.0...v1.2.0) (2026-08-30)
 
 ### ✨ Features
