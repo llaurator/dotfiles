@@ -7,6 +7,10 @@ Dotfiles personales para macOS y determinadas distribuciones Linux, instalados c
 > [!WARNING]
 > Estos son dotfiles personales. El instalador puede instalar paquetes, cambiar el shell de inicio de sesión, crear enlaces simbólicos y modificar la configuración de usuario. Revisa los scripts antes de ejecutarlos y úsalos bajo tu propia responsabilidad.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Dotfiles ejecutándose en Fedora Asahi con Zsh, Powerlevel10k, Dracula y MesloLGS Nerd Font">
+</p>
+
 ## Inicio rápido
 
 ```bash

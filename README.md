@@ -7,6 +7,10 @@ English | [Español](README.es.md)
 > [!WARNING]
 > These are personal dotfiles. The installer can install packages, change the login shell, create symlinks, and modify user configuration. Review the scripts before running them and use them at your own risk.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Dotfiles running on Fedora Asahi with Zsh, Powerlevel10k, Dracula and MesloLGS Nerd Font">
+</p>
+
 ## Quick start
 
 ```bash
