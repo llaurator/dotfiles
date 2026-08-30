@@ -44,7 +44,7 @@ get_system_packages() { SYSTEM_PACKAGES=(A B C); }
 
 reset_cycle() {
   rm -rf -- "$ACTIVE_CYCLE_DIR/package-snapshots"
-  rm -f -- "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
+  rm -f -- "$ACTIVE_CYCLE_DIR/package-transactions.tsv" "$ACTIVE_CYCLE_DIR/restore-journal.tsv" "$ACTIVE_CYCLE_DIR/restore.log"
   printf 'package\tmanager\tstate\n' > "$ACTIVE_CYCLE_DIR/packages.tsv"
   printf 'key\tbefore\tafter\nlogin_shell\t/bin/bash\t-\n' > "$ACTIVE_CYCLE_DIR/environment.tsv"
   printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\n' > "$ACTIVE_CYCLE_DIR/upstream.tsv"

@@ -74,6 +74,21 @@ run_install_with_input() {
   ) > "$output" 2>&1
 }
 
+run_install_dynamic_shell() {
+  local home="$1" output="$2"
+  shift 2
+  (
+    cd "$home"
+    HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
+      LOGIN_SHELL_FILE="${LOGIN_SHELL_FILE:-}" CHSH_FAILURE_FILE="${CHSH_FAILURE_FILE:-}" \
+      PACKAGE_STATE_DIR="${PACKAGE_STATE_DIR:-}" PACKAGE_FAILURE_FILE="${PACKAGE_FAILURE_FILE:-}" \
+      REMOVE_FAILURE_FILE="${REMOVE_FAILURE_FILE:-}" REMOVE_FAILURE_MATCH="${REMOVE_FAILURE_MATCH:-}" \
+      GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
+      "$FIXTURE_REPO/install.sh" "$@"
+  ) > "$output" 2>&1
+}
+
 expect_failure() {
   if "$@"; then fail 'la operación debía haber fallado'; fi
 }
@@ -377,5 +392,140 @@ assert_file_content "$home_keep/packages-remain.marker" 'packages remain'
 assert_contains "$home_keep/uninstall.out" 'conservar A'
 assert_contains "$home_keep/uninstall.out" 'conservar B'
 assert_contains "$home_keep/uninstall.out" 'conservar C'
+
+# Un rollback interrumpido se reanuda recurso a recurso. chsh se mantiene intacto:
+# el doble solo permite reproducir un fallo externo y reflejar el shell resultante.
+home_resume="$TEST_ROOT/home-resume"
+prepare_home "$home_resume"
+printf 'configuración original\n' > "$home_resume/.zshrc"
+login_shell_file="$home_resume/login-shell"
+printf '/usr/bin/zsh\n' > "$login_shell_file"
+LOGIN_SHELL_FILE="$login_shell_file" run_install_dynamic_shell "$home_resume" "$home_resume/install.out" \
+  --profile server --yes --backup-conflicts
+cycle_resume="$(active_cycle_dir "$home_resume")"
+sed -i $'s#^login_shell\t.*#login_shell\t/bin/bash\t/usr/bin/zsh#' "$cycle_resume/environment.tsv"
+
+package_state_dir="$home_resume/package-state"
+mkdir -p "$package_state_dir"
+: > "$package_state_dir/zsh"
+: > "$package_state_dir/tool-a"
+printf 'zsh\tdnf\tinstalled_by_cycle\ntool-a\tdnf\tinstalled_by_cycle\n' >> "$cycle_resume/packages.tsv"
+
+resume_upstream="$home_resume/.resume-upstream"
+mkdir -p "$resume_upstream/.git"
+printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\nResume upstream\t.resume-upstream\tno\thttps://github.com/example/resume.git\tcommit123\n' \
+  > "$cycle_resume/upstream.tsv"
+resume_font_rel='.local/share/fonts/MesloLGSNerdFont-Resume.ttf'
+mkdir -p "$home_resume/.local/share/fonts"
+printf 'font fixture\n' > "$home_resume/$resume_font_rel"
+resume_font_fingerprint="$(
+  HOME="$home_resume" PATH="$FAKE_BIN:$PATH" bash -c \
+    'source "$1/scripts/lib.sh"; source "$1/scripts/state.sh"; path_fingerprint "$2"' _ \
+    "$FIXTURE_REPO" "$home_resume/$resume_font_rel"
+)"
+printf '%s\tmissing\t%s\n' "$resume_font_rel" "$resume_font_fingerprint" >> "$cycle_resume/fonts.tsv"
+
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  'shell=$(< "$LOGIN_SHELL_FILE")' \
+  'printf "user:x:1000:1000::%s:%s\n" "$HOME" "$shell"' > "$FAKE_BIN/getent"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  'printf "%s\n" "$*" >> "$HOME/chsh.log"' \
+  'if [[ -n "${CHSH_FAILURE_FILE:-}" && -e "$CHSH_FAILURE_FILE" ]]; then exit 1; fi' \
+  '[[ "$1" == -s && -n "${2:-}" ]] || exit 2' \
+  'printf "%s\n" "$2" > "$LOGIN_SHELL_FILE"' > "$FAKE_BIN/chsh"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  '[[ "$1" == -q && "$2" == -- ]] || exit 1' \
+  '[[ -e "$PACKAGE_STATE_DIR/$3" ]]' > "$FAKE_BIN/rpm"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  'if [[ "$1" == remove && "$2" == --assumeno ]]; then exit 1; fi' \
+  'if [[ -n "${PACKAGE_FAILURE_FILE:-}" && -e "$PACKAGE_FAILURE_FILE" ]]; then exit 9; fi' \
+  'for argument in "$@"; do case "$argument" in zsh|tool-a) /usr/bin/rm -f -- "$PACKAGE_STATE_DIR/$argument";; esac; done' > "$FAKE_BIN/dnf"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' > "$FAKE_BIN/sudo"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  'case "$*" in *"remote get-url origin"*) printf "https://github.com/example/resume.git\n";;' \
+  '*"rev-parse HEAD"*) printf "commit123\n";;' \
+  '*"status --porcelain"*) :;; *) exec /usr/bin/git "$@";; esac' > "$FAKE_BIN/git"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' \
+  'if [[ -n "${REMOVE_FAILURE_FILE:-}" && -e "$REMOVE_FAILURE_FILE" && "$*" == *"$REMOVE_FAILURE_MATCH"* ]]; then exit 8; fi' \
+  'exec /usr/bin/rm "$@"' > "$FAKE_BIN/rm"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FAKE_BIN/fc-cache"
+chmod +x "$FAKE_BIN/getent" "$FAKE_BIN/chsh" "$FAKE_BIN/rpm" "$FAKE_BIN/dnf" \
+  "$FAKE_BIN/sudo" "$FAKE_BIN/git" "$FAKE_BIN/rm" "$FAKE_BIN/fc-cache"
+
+chsh_failure_file="$home_resume/fail-chsh"
+: > "$chsh_failure_file"
+LOGIN_SHELL_FILE="$login_shell_file"; CHSH_FAILURE_FILE="$chsh_failure_file"; PACKAGE_STATE_DIR="$package_state_dir"
+expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/chsh-failure.out" --uninstall --yes
+assert_file_content "$home_resume/.zshrc" 'configuración original'
+[[ -e "$package_state_dir/zsh" && -e "$package_state_dir/tool-a" ]] || fail 'un fallo de chsh retiró paquetes'
+[[ -d "$resume_upstream" && -f "$home_resume/$resume_font_rel" ]] || fail 'un fallo de chsh continuó con el entorno'
+assert_contains "$cycle_resume/restore-journal.tsv" $'shell_restore\tlogin_shell\tstarted'
+
+# Compatibilidad con la baseline real ya existente: sin el journal nuevo, los eventos
+# removed/restored del restore.log y la huella del backup bastan para reconocer lo hecho.
+/usr/bin/rm -- "$cycle_resume/restore-journal.tsv"
+journal_before="$(cksum "$cycle_resume/restore.log")"
+LOGIN_SHELL_FILE="$login_shell_file" CHSH_FAILURE_FILE="$chsh_failure_file" \
+  PACKAGE_STATE_DIR="$package_state_dir" run_install_dynamic_shell "$home_resume" "$home_resume/partial-dry-run.out" --uninstall --dry-run
+assert_contains "$home_resume/partial-dry-run.out" 'Hecho:      ~/.zshrc'
+assert_contains "$home_resume/partial-dry-run.out" 'pendiente: /usr/bin/zsh → /bin/bash'
+[[ "$(cksum "$cycle_resume/restore.log")" == "$journal_before" && ! -e "$cycle_resume/restore-journal.tsv" ]] ||
+  fail 'el dry-run parcial modificó los checkpoints'
+LOGIN_SHELL_FILE="$login_shell_file" PACKAGE_STATE_DIR="$package_state_dir" \
+  run_install_dynamic_shell "$home_resume" "$home_resume/partial-status.out" --status
+assert_contains "$home_resume/partial-status.out" 'Restore:    parcial / pendiente'
+
+# Si el usuario cambia el archivo después de restaurarlo, el checkpoint no autoriza
+# sobrescribirlo ni permite que continúe el rollback.
+printf 'cambio posterior del usuario\n' > "$home_resume/.zshrc"
+chsh_log_before="$(wc -l < "$home_resume/chsh.log" | tr -d ' ')"
+expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/user-change.out" --uninstall --yes
+assert_file_content "$home_resume/.zshrc" 'cambio posterior del usuario'
+[[ "$(wc -l < "$home_resume/chsh.log" | tr -d ' ')" == "$chsh_log_before" ]] || fail 'el conflicto posterior llegó a chsh'
+printf 'configuración original\n' > "$home_resume/.zshrc"
+
+# chsh tiene éxito al reintentar; a partir de ahí cada fallo posterior deja su acción
+# started y las acciones completed no se repiten.
+/usr/bin/rm -- "$chsh_failure_file"
+CHSH_FAILURE_FILE=''
+remove_failure_file="$home_resume/fail-remove"
+: > "$remove_failure_file"
+REMOVE_FAILURE_FILE="$remove_failure_file"; REMOVE_FAILURE_MATCH='.resume-upstream'; PACKAGE_FAILURE_FILE=''
+expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/upstream-failure.out" --uninstall --yes
+assert_file_content "$login_shell_file" '/bin/bash'
+[[ -e "$package_state_dir/zsh" && -e "$package_state_dir/tool-a" ]] || fail 'un fallo upstream retiró paquetes'
+[[ -d "$resume_upstream" ]] || fail 'el fallo upstream no fue reproducible'
+
+/usr/bin/rm -- "$remove_failure_file"
+REMOVE_FAILURE_FILE=''; REMOVE_FAILURE_MATCH=''
+package_failure_file="$home_resume/fail-packages"
+: > "$package_failure_file"
+PACKAGE_FAILURE_FILE="$package_failure_file"
+expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/package-failure.out" --uninstall --yes
+[[ ! -e "$resume_upstream" ]] || fail 'el retry no completó upstream'
+[[ -e "$package_state_dir/zsh" && -e "$package_state_dir/tool-a" ]] || fail 'el gestor ficticio fallido retiró paquetes'
+
+/usr/bin/rm -- "$package_failure_file"
+PACKAGE_FAILURE_FILE=''
+: > "$remove_failure_file"
+REMOVE_FAILURE_FILE="$remove_failure_file"; REMOVE_FAILURE_MATCH='MesloLGSNerdFont-Resume.ttf'
+expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/font-failure.out" --uninstall --yes
+[[ ! -e "$package_state_dir/zsh" && ! -e "$package_state_dir/tool-a" ]] || fail 'el retry no completó paquetes'
+[[ -f "$home_resume/$resume_font_rel" ]] || fail 'el fallo de fuente no fue reproducible'
+
+/usr/bin/rm -- "$remove_failure_file"
+REMOVE_FAILURE_FILE=''; REMOVE_FAILURE_MATCH=''
+run_install_dynamic_shell "$home_resume" "$home_resume/resumed.out" --uninstall --yes
+[[ ! -e "$home_resume/$resume_font_rel" ]] || fail 'el retry no completó la fuente'
+assert_file_content "$cycle_resume/status" 'restored'
+run_install_dynamic_shell "$home_resume" "$home_resume/idempotent.out" --uninstall --yes
+assert_contains "$home_resume/idempotent.out" 'ya fue restaurado'
 
 printf 'OK: instalación reversible, restauración y seguridad de baseline\n'

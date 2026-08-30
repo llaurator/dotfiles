@@ -325,7 +325,85 @@ validate_active_cycle() {
   validate_metadata
   validate_manifest
   validate_ownership
+  validate_restore_journal
   if [[ "$BASELINE_FORMAT" == 2 ]]; then validate_environment_manifest; fi
+}
+
+validate_restore_journal() {
+  local file="$ACTIVE_CYCLE_DIR/restore-journal.tsv" header action resource state extra
+  [[ -e "$file" || -L "$file" ]] || return 0
+  [[ -f "$file" && ! -L "$file" ]] || die 'Journal de restauración inseguro.'
+  IFS= read -r header < "$file" || die 'Journal de restauración vacío.'
+  [[ "$header" == $'action\tresource\tstate' ]] || die 'Cabecera del journal de restauración no válida.'
+  while IFS=$'\t' read -r action resource state extra; do
+    [[ -n "$resource" && -z "$extra" && "$state" =~ ^(started|completed)$ ]] ||
+      die 'Entrada del journal de restauración corrupta.'
+    case "$action" in
+      config_remove|config_restore|shell_restore|upstream_remove|packages_remove|repository_remove|font_remove|directories_restore) ;;
+      *) die 'Acción desconocida en el journal de restauración.' ;;
+    esac
+  done < <(sed -n '2,$p' "$file")
+  awk -F '\t' 'NR > 1 { key=$1 FS $2; if (seen[key]++) exit 1 }' "$file" ||
+    die 'Journal de restauración con acciones duplicadas.'
+}
+
+legacy_restore_completed() {
+  local event="$1" resource="$2" file="$ACTIVE_CYCLE_DIR/restore.log"
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  awk -F '\t' -v wanted_event="$event" -v wanted_resource="$resource" \
+    'NF >= 3 && $2 == wanted_event && (wanted_resource == "*" || $3 == wanted_resource) { found=1 } END { exit !found }' "$file"
+}
+
+restore_checkpoint_state() {
+  local action="$1" resource="$2" legacy_event="${3:-}" legacy_resource="${4:-$2}"
+  local file="$ACTIVE_CYCLE_DIR/restore-journal.tsv" state
+  if [[ -f "$file" && ! -L "$file" ]]; then
+    state="$(awk -F '\t' -v wanted_action="$action" -v wanted_resource="$resource" \
+      'NR > 1 && $1 == wanted_action && $2 == wanted_resource { print $3; exit }' "$file")"
+    if [[ -n "$state" ]]; then printf '%s' "$state"; return 0; fi
+  fi
+  if [[ -n "$legacy_event" ]] && legacy_restore_completed "$legacy_event" "$legacy_resource"; then
+    printf 'completed'
+    return 0
+  fi
+  printf 'pending'
+}
+
+restore_checkpoint_set() {
+  local action="$1" resource="$2" state="$3" file="$ACTIVE_CYCLE_DIR/restore-journal.tsv" tmp old_umask
+  [[ -n "$resource" && "$resource" != *$'\n'* && "$resource" != *$'\t'* ]] ||
+    die 'Recurso no válido para el journal de restauración.'
+  [[ "$state" == started || "$state" == completed ]] || die 'Estado de checkpoint no válido.'
+  old_umask="$(umask)"
+  umask 077
+  tmp="$ACTIVE_CYCLE_DIR/.restore-journal.$$"
+  if [[ -e "$file" || -L "$file" ]]; then
+    [[ -f "$file" && ! -L "$file" ]] || die 'Journal de restauración inseguro.'
+    awk -F '\t' -v wanted_action="$action" -v wanted_resource="$resource" \
+      'NR == 1 || $1 != wanted_action || $2 != wanted_resource' "$file" > "$tmp"
+  else
+    printf 'action\tresource\tstate\n' > "$tmp"
+  fi
+  printf '%s\t%s\t%s\n' "$action" "$resource" "$state" >> "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$file"
+  umask "$old_umask"
+}
+
+restore_log_append() {
+  if [[ -e "$ACTIVE_CYCLE_DIR/restore.log" || -L "$ACTIVE_CYCLE_DIR/restore.log" ]]; then
+    [[ -f "$ACTIVE_CYCLE_DIR/restore.log" && ! -L "$ACTIVE_CYCLE_DIR/restore.log" ]] ||
+      die 'Log de restauración inseguro.'
+  fi
+  printf '%s\t%s\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" "$2" >> "$ACTIVE_CYCLE_DIR/restore.log"
+  chmod 600 "$ACTIVE_CYCLE_DIR/restore.log"
+}
+
+restore_has_progress() {
+  local journal="$ACTIVE_CYCLE_DIR/restore-journal.tsv" log="$ACTIVE_CYCLE_DIR/restore.log"
+  [[ -f "$journal" && ! -L "$journal" ]] && awk 'NR > 1 { found=1 } END { exit !found }' "$journal" && return 0
+  [[ -f "$log" && ! -L "$log" ]] &&
+    awk -F '\t' '$2 ~ /^(removed|restored|shell-restored|upstream-removed|packages-removed|vscode-repository-removed)$/ { found=1 } END { exit !found }' "$log"
 }
 
 create_cycle() {
@@ -592,21 +670,65 @@ preflight_owned_path() {
   esac
 }
 
+configuration_restore_state() {
+  local relative="$1" kind="$2" proof="$3" source="$4" target original_type backup backup_path
+  local remove_state restore_state current_fingerprint='missing'
+  target="$HOME/$relative"
+  original_type="$(manifest_field "$relative" 2)"
+  remove_state="$(restore_checkpoint_state config_remove "$relative" removed)"
+  restore_state="$(restore_checkpoint_state config_restore "$relative" restored)"
+  if [[ -e "$target" || -L "$target" ]]; then current_fingerprint="$(path_fingerprint "$target")"; fi
+
+  if [[ "$original_type" != missing ]]; then
+    backup="$(manifest_field "$relative" 3)"
+    backup_path="$ACTIVE_CYCLE_DIR/$backup"
+    if [[ "$restore_state" != pending ]]; then
+      [[ "$current_fingerprint" == "$(path_fingerprint "$backup_path")" ]] && { printf 'completed'; return; }
+      printf 'conflict'; return
+    fi
+    if [[ "$remove_state" != pending || "$current_fingerprint" == missing ]]; then
+      [[ "$current_fingerprint" == missing ]] && { printf 'restore'; return; }
+      printf 'conflict'; return
+    fi
+  elif [[ "$remove_state" != pending ]]; then
+    [[ "$current_fingerprint" == missing ]] && { printf 'completed'; return; }
+    printf 'conflict'; return
+  elif [[ "$current_fingerprint" == missing ]]; then
+    printf 'completed'; return
+  fi
+
+  if preflight_owned_path "$relative" "$kind" "$proof" "$source"; then
+    if [[ "$original_type" == missing ]]; then printf 'remove'; else printf 'remove_restore'; fi
+  else
+    printf 'conflict'
+  fi
+}
+
 print_restore_plan() {
-  local relative kind proof source original_type
+  local relative kind proof source original_type state
   printf '\nPlan de restauración:\n'
   while IFS=$'\t' read -r relative kind proof source; do
     validate_target_containment "$relative"
-    if [[ -e "$HOME/$relative" || -L "$HOME/$relative" ]]; then printf '  Retirar:  ~/%s\n' "$relative"; fi
     original_type="$(manifest_field "$relative" 2)"
-    if [[ "$original_type" != missing ]]; then printf '  Restaurar: ~/%s (%s)\n' "$relative" "$original_type"; fi
+    state="$(configuration_restore_state "$relative" "$kind" "$proof" "$source")"
+    case "$state" in
+      completed) printf '  Hecho:      ~/%s\n' "$relative" ;;
+      remove) printf '  Pendiente retirar:  ~/%s\n' "$relative" ;;
+      restore) printf '  Pendiente restaurar: ~/%s (%s)\n' "$relative" "$original_type" ;;
+      remove_restore)
+        printf '  Pendiente retirar:  ~/%s\n' "$relative"
+        printf '  Pendiente restaurar: ~/%s (%s)\n' "$relative" "$original_type"
+        ;;
+      conflict) printf '  Conflicto:  ~/%s\n' "$relative" ;;
+    esac
   done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
 }
 
 preflight_restore() {
-  local relative kind proof source conflicts=()
+  local relative kind proof source state conflicts=()
   while IFS=$'\t' read -r relative kind proof source; do
-    if ! preflight_owned_path "$relative" "$kind" "$proof" "$source"; then conflicts+=("$relative"); fi
+    state="$(configuration_restore_state "$relative" "$kind" "$proof" "$source")"
+    [[ "$state" != conflict ]] || conflicts+=("$relative")
   done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
   if (( ${#conflicts[@]} > 0 )); then
     warn 'La restauración se cancela porque estas rutas ya no son inequívocamente gestionadas:'
@@ -628,46 +750,77 @@ owned_stow_packages() {
 }
 
 remove_owned_configuration() {
-  local package relative kind proof source target
-  owned_stow_packages
-  for package in "${RESTORE_STOW_PACKAGES[@]}"; do
-    if ! stow -D --no-folding --dir="$DOTFILES_ROOT" --target="$HOME" "$package"; then
-      die "Stow no pudo retirar el paquete $package; la restauración puede haber quedado parcial."
-    fi
-  done
+  local relative kind proof source target state checkpoint
   while IFS=$'\t' read -r relative kind proof source; do
     target="$HOME/$relative"
+    state="$(configuration_restore_state "$relative" "$kind" "$proof" "$source")"
+    checkpoint="$(restore_checkpoint_state config_remove "$relative" removed)"
+    case "$state" in
+      completed|restore)
+        if [[ "$checkpoint" == started && ! -e "$target" && ! -L "$target" ]]; then
+          restore_checkpoint_set config_remove "$relative" completed
+          restore_log_append removed "$relative"
+        fi
+        continue
+        ;;
+      conflict) die "La ruta cambió durante la restauración: ~/$relative" ;;
+    esac
+    [[ "$checkpoint" == started ]] || restore_checkpoint_set config_remove "$relative" started
     if [[ "$kind" == stow ]]; then
       if [[ -L "$target" && "$proof" != pending && "$(path_fingerprint "$target")" == "$proof" ]]; then
-        rm -- "$target"
+        rm -- "$target" || die "No se pudo retirar de forma segura: ~/$relative"
       elif [[ "$proof" == pending ]] && stow_link_is_managed "$target" "$DOTFILES_ROOT/$source"; then
-        rm -- "$target"
+        rm -- "$target" || die "No se pudo retirar de forma segura: ~/$relative"
       fi
     elif [[ -e "$target" || -L "$target" ]]; then
       [[ "$(path_fingerprint "$target")" == "$proof" ]] ||
         die "La ruta cambió durante la restauración: ~/$relative"
-      rm -- "$target"
+      if [[ -d "$target" && ! -L "$target" ]]; then rm -rf -- "$target"; else rm -- "$target"; fi ||
+        die "No se pudo retirar de forma segura: ~/$relative"
     fi
     if [[ -e "$target" || -L "$target" ]]; then
       die "No se pudo retirar de forma segura: ~/$relative"
     fi
-    printf '%s\tremoved\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$relative" >> "$ACTIVE_CYCLE_DIR/restore.log"
+    restore_checkpoint_set config_remove "$relative" completed
+    restore_log_append removed "$relative"
   done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
 }
 
 restore_baseline_files() {
-  local relative kind proof source original_type backup target backup_path
+  local relative kind proof source original_type backup target backup_path temporary state checkpoint
   while IFS=$'\t' read -r relative kind proof source; do
     original_type="$(manifest_field "$relative" 2)"
     [[ "$original_type" != missing ]] || continue
+    state="$(configuration_restore_state "$relative" "$kind" "$proof" "$source")"
+    [[ "$state" != completed ]] || {
+      if [[ "$(restore_checkpoint_state config_restore "$relative" restored)" == started ]]; then
+        restore_checkpoint_set config_restore "$relative" completed
+        restore_log_append restored "$relative"
+      fi
+      continue
+    }
+    [[ "$state" == restore ]] || die "La ruta cambió durante la restauración: ~/$relative"
     backup="$(manifest_field "$relative" 3)"
     target="$HOME/$relative"
     backup_path="$ACTIVE_CYCLE_DIR/$backup"
     [[ ! -e "$target" && ! -L "$target" ]] || die "La ruta reapareció durante la restauración: ~/$relative"
     mkdir -p "${target%/*}"
-    copy_path_to_backup "$backup_path" "$target" ||
+    checkpoint="$(restore_checkpoint_state config_restore "$relative" restored)"
+    [[ "$checkpoint" == started ]] || restore_checkpoint_set config_restore "$relative" started
+    temporary="${target}.restore.$$"
+    [[ ! -e "$temporary" && ! -L "$temporary" ]] || die 'Existe una ruta temporal de restauración insegura.'
+    if ! copy_path_to_backup "$backup_path" "$temporary"; then
+      rm -rf -- "$temporary"
       die "No se pudo restaurar ~/$relative; la restauración ha quedado parcial."
-    printf '%s\trestored\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$relative" >> "$ACTIVE_CYCLE_DIR/restore.log"
+    fi
+    if ! mv -- "$temporary" "$target"; then
+      rm -rf -- "$temporary"
+      die "No se pudo publicar de forma atómica ~/$relative; la restauración ha quedado parcial."
+    fi
+    [[ "$(path_fingerprint "$target")" == "$(path_fingerprint "$backup_path")" ]] ||
+      die "La restauración no coincide con el backup: ~/$relative"
+    restore_checkpoint_set config_restore "$relative" completed
+    restore_log_append restored "$relative"
   done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
 }
 
@@ -774,17 +927,20 @@ package_stow_status() {
 }
 
 show_dotfiles_status() {
-  local profile='no configurado' baseline='no disponible' installed='no' package shell hosts='ninguno'
+  local profile='no configurado' baseline='no disponible' installed='no' restore='ninguno' package shell hosts='ninguno'
   validate_home_and_state
   if [[ -f "$HOME/.config/dotfiles/profile" && ! -L "$HOME/.config/dotfiles/profile" ]]; then
     IFS= read -r profile < "$HOME/.config/dotfiles/profile" || profile='no configurado'
     case "$profile" in personal|work|server) ;; *) profile='desconocido' ;; esac
   fi
-  if validate_active_cycle; then baseline="$BASELINE_STATUS, formato $BASELINE_FORMAT ($ACTIVE_CYCLE)"; fi
+  if validate_active_cycle; then
+    baseline="$BASELINE_STATUS, formato $BASELINE_FORMAT ($ACTIVE_CYCLE)"
+    if [[ "$BASELINE_STATUS" == active ]] && restore_has_progress; then restore='parcial / pendiente'; fi
+  fi
   if managed_dotfiles_exist; then installed='yes'; fi
   printf '\nDotfiles status\n\n'
   shell="$(current_login_shell)"
-  printf 'Repo:       %s\nProfile:    %s\nBaseline:   %s\nInstalled:  %s\nShell:      %s\n\n' "$DOTFILES_ROOT" "$profile" "$baseline" "$installed" "$shell"
+  printf 'Repo:       %s\nProfile:    %s\nBaseline:   %s\nRestore:    %s\nInstalled:  %s\nShell:      %s\n\n' "$DOTFILES_ROOT" "$profile" "$baseline" "$restore" "$installed" "$shell"
   printf 'Stow:\n'
   for package in zsh git btop ssh vscode; do
     if package_stow_status "$package"; then success "$package"; else printf '  - %s\n' "$package"; fi
@@ -1089,9 +1245,16 @@ upstream_is_pristine() {
 }
 
 preflight_environment_restore() {
-  local before after current name rel existed origin commit package manager state
+  local before after current name rel existed origin commit package manager state checkpoint
   before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
-  if [[ "$after" != - && "$current" != "$after" ]]; then warn "El shell cambió después de la instalación ($current); se conservará."; fi
+  checkpoint="$(restore_checkpoint_state shell_restore login_shell shell-restored "$before")"
+  if [[ "$checkpoint" == completed && "$current" == "$after" && "$before" != "$after" ]]; then
+    die 'El shell restaurado volvió al valor instalado; se conserva y se detiene el rollback.'
+  elif [[ "$checkpoint" == started && "$current" != "$after" && "$current" != "$before" ]]; then
+    die "El shell cambió durante la restauración ($current); se conserva y se detiene el rollback."
+  elif [[ "$checkpoint" == pending && "$after" != - && "$current" != "$after" && "$current" != "$before" ]]; then
+    warn "El shell cambió después de la instalación ($current); se conservará."
+  fi
   if [[ "$1" -eq 0 ]]; then
     while IFS=$'\t' read -r name rel existed origin commit; do
       [[ "$existed" == no ]] || continue
@@ -1105,7 +1268,9 @@ preflight_environment_restore() {
 }
 
 preflight_package_removal() {
-  local package manager state output line candidate; local -a packages=() extras=()
+  local package manager state output line candidate checkpoint; local -a packages=() extras=()
+  checkpoint="$(restore_checkpoint_state packages_remove system packages-removed '*')"
+  [[ "$checkpoint" != completed ]] || return 0
   while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] && package_is_installed "$package" && packages+=("$package"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   (( ${#packages[@]} )) || return 0
   manager="$(awk -F '\t' '$3=="installed_by_cycle" {print $2; exit}' "$ACTIVE_CYCLE_DIR/packages.tsv")"
@@ -1138,48 +1303,115 @@ fedora_vscode_repository_is_removable() {
 }
 
 print_environment_restore_plan() {
-  local keep="$1" before after current package manager state name rel existed origin commit
+  local keep="$1" before after current package manager state name rel existed origin commit checkpoint target
   printf '\nShell:\n'; before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
-  if [[ "$after" != - && "$current" == "$after" ]]; then printf '  %s → %s\n' "$after" "$before"; elif [[ "$after" == - ]]; then printf '  conservar %s\n' "$current"; else printf '  conservar %s (cambio posterior)\n' "$current"; fi
+  checkpoint="$(restore_checkpoint_state shell_restore login_shell shell-restored "$before")"
+  if [[ "$checkpoint" == completed || "$current" == "$before" ]]; then
+    printf '  hecho: %s\n' "$before"
+  elif [[ "$after" != - && "$current" == "$after" ]]; then
+    printf '  pendiente: %s → %s\n' "$after" "$before"
+  elif [[ "$after" == - ]]; then
+    printf '  conservar %s\n' "$current"
+  else
+    printf '  conservar %s (cambio posterior)\n' "$current"
+  fi
   printf '\nPaquetes instalados por este ciclo:\n'
-  while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] || continue; if [[ "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$package"; else printf '  retirar %s\n' "$package"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  checkpoint="$(restore_checkpoint_state packages_remove system packages-removed '*')"
+  while IFS=$'\t' read -r package manager state; do
+    [[ "$state" == installed_by_cycle ]] || continue
+    if [[ "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$package"
+    elif [[ "$checkpoint" == completed ]]; then printf '  hecho: %s\n' "$package"
+    elif package_is_installed "$package"; then printf '  retirar %s\n' "$package"
+    else printf '  hecho: %s\n' "$package"
+    fi
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   printf '\nPaquetes que ya existían:\n'; while IFS=$'\t' read -r package manager state; do [[ "$state" == already_present ]] && printf '  conservar %s\n' "$package"; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   if [[ -n "$(environment_field fedora_vscode_repository 2)" ]]; then
     printf '\nRepositorio oficial de VS Code:\n'
+    checkpoint="$(restore_checkpoint_state repository_remove "$FEDORA_VSCODE_REPO_FILE" vscode-repository-removed)"
     if [[ "$keep" -eq 1 ]]; then
       printf '  conservar %s\n' "$FEDORA_VSCODE_REPO_FILE"
+    elif [[ "$checkpoint" == completed ]]; then
+      printf '  hecho: %s\n' "$FEDORA_VSCODE_REPO_FILE"
     elif fedora_vscode_repository_is_removable; then
       printf '  retirar %s\n' "$FEDORA_VSCODE_REPO_FILE"
     else
       printf '  conservar %s (preexistente o modificado)\n' "$FEDORA_VSCODE_REPO_FILE"
     fi
   fi
-  printf '\nUpstream:\n'; while IFS=$'\t' read -r name rel existed origin commit; do if [[ "$existed" == yes || "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$name"; elif upstream_is_pristine "$HOME/$rel" "$origin" "$commit"; then printf '  retirar %s\n' "$name"; else printf '  conservar %s (cambios posteriores)\n' "$name"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
+  printf '\nUpstream:\n'; while IFS=$'\t' read -r name rel existed origin commit; do
+    checkpoint="$(restore_checkpoint_state upstream_remove "$rel" upstream-removed "$name")"; target="$HOME/$rel"
+    if [[ "$existed" == yes || "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$name"
+    elif [[ "$checkpoint" == completed || "$checkpoint" == started && ! -e "$target" ]]; then printf '  hecho: %s\n' "$name"
+    elif upstream_is_pristine "$target" "$origin" "$commit"; then printf '  pendiente retirar %s\n' "$name"
+    else printf '  conservar %s (cambios posteriores)\n' "$name"
+    fi
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   printf '\nFuentes:\n'; if [[ "$keep" -eq 1 ]]; then printf '  conservar fuentes instaladas\n'; else printf '  retirar únicamente archivos/cask atribuibles e intactos\n'; fi
   printf '\nDirectorios:\n  retirar directorios vacíos creados por este ciclo; restaurar modes solo si no cambiaron después\n'
   printf '\nHistoriales:\n  conservar .bash_history, .zsh_history y .zsh_history.pre-bash-migration\nRepo:\n  conservar %s\n' "$DOTFILES_ROOT"
 }
 
 restore_login_shell() {
-  local before after current
+  local before after current checkpoint
   before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
   [[ "$after" != - && "$before" != - ]] || return 0
-  if [[ "$current" == "$after" ]]; then chsh -s "$before" || die 'No se pudo restaurar el shell de login.'; printf '%s\tshell-restored\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$before" >> "$ACTIVE_CYCLE_DIR/restore.log"; fi
+  checkpoint="$(restore_checkpoint_state shell_restore login_shell shell-restored "$before")"
+  if [[ "$checkpoint" == completed ]]; then return 0; fi
+  if [[ "$current" == "$before" ]]; then
+    restore_checkpoint_set shell_restore login_shell completed
+    restore_log_append shell-restored "$before"
+    return 0
+  fi
+  [[ "$current" == "$after" ]] || return 0
+  [[ "$checkpoint" == started ]] || restore_checkpoint_set shell_restore login_shell started
+  chsh -s "$before" || die 'No se pudo restaurar el shell de login.'
+  restore_checkpoint_set shell_restore login_shell completed
+  restore_log_append shell-restored "$before"
 }
 
 remove_owned_upstream() {
-  local -a names=() rels=() origins=() commits=(); local name rel existed origin commit i target
+  local -a names=() rels=() origins=() commits=(); local name rel existed origin commit i target checkpoint
   while IFS=$'\t' read -r name rel existed origin commit; do [[ "$existed" == no ]] || continue; names+=("$name"); rels+=("$rel"); origins+=("$origin"); commits+=("$commit"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   for ((i=${#rels[@]}-1; i>=0; i--)); do
     validate_target_containment "${rels[i]}"; target="$HOME/${rels[i]}"
-    if upstream_is_pristine "$target" "${origins[i]}" "${commits[i]}"; then rm -rf -- "$target"; printf '%s\tupstream-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${names[i]}" >> "$ACTIVE_CYCLE_DIR/restore.log"; fi
+    checkpoint="$(restore_checkpoint_state upstream_remove "${rels[i]}" upstream-removed "${names[i]}")"
+    if [[ "$checkpoint" == completed ]]; then continue; fi
+    if [[ "$checkpoint" == started && ! -e "$target" && ! -L "$target" ]]; then
+      restore_checkpoint_set upstream_remove "${rels[i]}" completed
+      restore_log_append upstream-removed "${names[i]}"
+      continue
+    fi
+    if upstream_is_pristine "$target" "${origins[i]}" "${commits[i]}"; then
+      restore_checkpoint_set upstream_remove "${rels[i]}" started
+      rm -rf -- "$target" || die "No se pudo retirar ${names[i]}; el rollback queda pendiente."
+      [[ ! -e "$target" && ! -L "$target" ]] || die "No se pudo retirar completamente ${names[i]}."
+      restore_checkpoint_set upstream_remove "${rels[i]}" completed
+      restore_log_append upstream-removed "${names[i]}"
+    elif [[ "$checkpoint" == started ]]; then
+      die "${names[i]} cambió durante la restauración; se conserva y se detiene el rollback."
+    fi
   done
 }
 
 remove_cycle_packages() {
-  local manager='' package state recorded_manager; local -a packages=()
+  local manager='' package state recorded_manager checkpoint shell_before shell_after shell_current; local -a packages=()
+  checkpoint="$(restore_checkpoint_state packages_remove system packages-removed '*')"
+  [[ "$checkpoint" != completed ]] || return 0
   while IFS=$'\t' read -r package recorded_manager state; do [[ "$state" == installed_by_cycle ]] || continue; package_is_installed "$package" || continue; manager="$recorded_manager"; packages+=("$package"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
-  (( ${#packages[@]} )) || return 0
+  if (( ${#packages[@]} == 0 )); then
+    if [[ "$checkpoint" == started ]]; then restore_checkpoint_set packages_remove system completed; fi
+    return 0
+  fi
+  if array_contains zsh "${packages[@]}"; then
+    shell_before="$(environment_field login_shell 2)"
+    shell_after="$(environment_field login_shell 3)"
+    shell_current="$(current_login_shell)"
+    if [[ "$shell_before" != "$shell_after" && "$shell_current" == "$shell_after" ]]; then
+      die 'No se retirará zsh mientras siga siendo el shell de login activo.'
+    fi
+  fi
+  [[ "$checkpoint" == started ]] || restore_checkpoint_set packages_remove system started
   case "$manager" in
     dnf) sudo dnf remove -y --no-autoremove "${packages[@]}" ;;
     pacman) sudo pacman -R --noconfirm "${packages[@]}" ;;
@@ -1187,32 +1419,75 @@ remove_cycle_packages() {
     brew) brew uninstall "${packages[@]}" ;;
     *) die 'Gestor de paquetes desconocido en baseline.' ;;
   esac || die 'No se pudieron retirar todos los paquetes registrados; el ciclo queda activo.'
-  printf '%s\tpackages-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${packages[*]}" >> "$ACTIVE_CYCLE_DIR/restore.log"
+  for package in "${packages[@]}"; do
+    package_is_installed "$package" && die "El paquete $package continúa instalado; el ciclo queda activo."
+  done
+  restore_checkpoint_set packages_remove system completed
+  restore_log_append packages-removed "${packages[*]}"
 }
 
 remove_fedora_vscode_repository() {
+  local checkpoint
   [[ -n "$(environment_field fedora_vscode_repository 2)" ]] || return 0
+  checkpoint="$(restore_checkpoint_state repository_remove "$FEDORA_VSCODE_REPO_FILE" vscode-repository-removed)"
+  [[ "$checkpoint" != completed ]] || return 0
+  if [[ "$checkpoint" == started && ! -e "$FEDORA_VSCODE_REPO_FILE" && ! -L "$FEDORA_VSCODE_REPO_FILE" ]]; then
+    restore_checkpoint_set repository_remove "$FEDORA_VSCODE_REPO_FILE" completed
+    restore_log_append vscode-repository-removed "$FEDORA_VSCODE_REPO_FILE"
+    return 0
+  fi
   if fedora_vscode_repository_is_removable; then
+    restore_checkpoint_set repository_remove "$FEDORA_VSCODE_REPO_FILE" started
     sudo rm -- "$FEDORA_VSCODE_REPO_FILE" || die 'No se pudo retirar el repositorio de VS Code creado por el ciclo.'
-    printf '%s\tvscode-repository-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$FEDORA_VSCODE_REPO_FILE" >> "$ACTIVE_CYCLE_DIR/restore.log"
+    [[ ! -e "$FEDORA_VSCODE_REPO_FILE" && ! -L "$FEDORA_VSCODE_REPO_FILE" ]] ||
+      die 'El repositorio de VS Code continúa presente; el rollback queda pendiente.'
+    restore_checkpoint_set repository_remove "$FEDORA_VSCODE_REPO_FILE" completed
+    restore_log_append vscode-repository-removed "$FEDORA_VSCODE_REPO_FILE"
+  elif [[ "$checkpoint" == started ]]; then
+    die 'El repositorio de VS Code cambió durante la restauración; se conserva.'
   fi
 }
 
 remove_cycle_fonts() {
-  local rel before installed target
+  local rel before installed target checkpoint removed_any=0
   while IFS=$'\t' read -r rel before installed; do
+    checkpoint="$(restore_checkpoint_state font_remove "$rel")"
+    [[ "$checkpoint" != completed ]] || continue
     if [[ "$rel" == homebrew-cask:* ]]; then
-      if [[ "$before" == missing && "$installed" == installed_by_cycle ]]; then brew uninstall --cask "${rel#*:}" || die 'No se pudo retirar la fuente Homebrew.'; fi
+      if [[ "$before" == missing && "$installed" == installed_by_cycle ]]; then
+        if [[ "$checkpoint" == started ]] && ! brew list --cask "${rel#*:}" >/dev/null 2>&1; then
+          restore_checkpoint_set font_remove "$rel" completed
+          continue
+        fi
+        restore_checkpoint_set font_remove "$rel" started
+        brew uninstall --cask "${rel#*:}" || die 'No se pudo retirar la fuente Homebrew.'
+        ! brew list --cask "${rel#*:}" >/dev/null 2>&1 || die 'La fuente Homebrew continúa instalada.'
+        restore_checkpoint_set font_remove "$rel" completed
+        removed_any=1
+      fi
       continue
     fi
     validate_target_containment "$rel"; target="$HOME/$rel"
-    if [[ "$before" == missing && -f "$target" && "$(path_fingerprint "$target")" == "$installed" ]]; then rm -- "$target"; fi
+    if [[ "$before" == missing && "$checkpoint" == started && ! -e "$target" && ! -L "$target" ]]; then
+      restore_checkpoint_set font_remove "$rel" completed
+    elif [[ "$before" == missing && -f "$target" && "$(path_fingerprint "$target")" == "$installed" ]]; then
+      restore_checkpoint_set font_remove "$rel" started
+      rm -- "$target" || die "No se pudo retirar la fuente ~/$rel; el rollback queda pendiente."
+      [[ ! -e "$target" && ! -L "$target" ]] || die "La fuente ~/$rel continúa presente."
+      restore_checkpoint_set font_remove "$rel" completed
+      removed_any=1
+    elif [[ "$checkpoint" == started ]]; then
+      die "La fuente ~/$rel cambió durante la restauración; se conserva."
+    fi
   done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/fonts.tsv")
-  if command_exists fc-cache; then fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || warn 'No se pudo actualizar la caché de fuentes.'; fi
+  if [[ "$removed_any" -eq 1 ]] && command_exists fc-cache; then fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || warn 'No se pudo actualizar la caché de fuentes.'; fi
 }
 
 restore_directory_modes_and_remove_empty() {
-  local rel existed type old_mode installed_mode target
+  local rel existed type old_mode installed_mode target checkpoint
+  checkpoint="$(restore_checkpoint_state directories_restore system)"
+  [[ "$checkpoint" != completed ]] || return 0
+  [[ "$checkpoint" == started ]] || restore_checkpoint_set directories_restore system started
   while IFS=$'\t' read -r rel existed type old_mode installed_mode; do
     target="$HOME/$rel"
     if [[ "$existed" == yes && "$type" == directory && "$old_mode" != - && "$installed_mode" != - && -d "$target" && ! -L "$target" && "$(path_mode "$target")" == "$installed_mode" ]]; then chmod "$old_mode" "$target"; fi
@@ -1220,4 +1495,5 @@ restore_directory_modes_and_remove_empty() {
   while IFS=$'\t' read -r rel existed type old_mode installed_mode; do
     target="$HOME/$rel"; [[ "$existed" == no && -d "$target" && ! -L "$target" ]] && rmdir -- "$target" 2>/dev/null || true
   done < <(tail -n +2 "$ACTIVE_CYCLE_DIR/directories.tsv" | awk -F '\t' '{print length($1) "\t" $0}' | sort -rn | cut -f2-)
+  restore_checkpoint_set directories_restore system completed
 }
