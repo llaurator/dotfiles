@@ -1,264 +1,167 @@
 # dotfiles
 
-Dotfiles centralizados para macOS Apple Silicon (también compatible con Homebrew Intel),
-Arch, Fedora/Fedora Asahi y Debian/Ubuntu. GNU Stow crea los enlaces y un instalador Bash
-detecta la plataforma, instala dependencias y activa uno de tres perfiles.
+Personal dotfiles for macOS and selected Linux distributions, installed with Bash and [GNU Stow](https://www.gnu.org/software/stow/).
 
-## Instalación rápida
+English | [Español](README.es.md)
 
-La opción más sencilla descarga el bootstrap auditable desde GitHub y abre el menú
-interactivo del instalador:
+> [!WARNING]
+> These are personal dotfiles. The installer can install packages, change the login shell, create symlinks, and modify user configuration. Review the scripts before running them and use them at your own risk.
+
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh | bash
 ```
 
-Instalación no interactiva para un servidor:
+For an unattended server installation:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
   | bash -s -- --profile server --yes
 ```
 
-Instalación reproducible desde una release concreta:
+### Inspect first (recommended)
+
+Download and inspect the bootstrap script before executing it:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh
+less bootstrap.sh
+bash bootstrap.sh
+```
+
+The bootstrap clones over HTTPS, then runs the repository's `install.sh`. It keeps the checkout at:
+
+```text
+${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles
+```
+
+or at the absolute path set in `DOTFILES_DIR`. Keep this repository: Stow symlinks point to files inside it.
+
+To install a specific tag, branch, or commit instead of `main`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
-  | bash -s -- --ref v1.1.0 --profile server --yes
+  | bash -s -- --ref vX.Y.Z --profile server --yes
 ```
 
-El repositorio permanece en `${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles`, o en la ruta
-absoluta indicada mediante `DOTFILES_DIR`. Es necesario conservarlo porque los enlaces de
-GNU Stow apuntan a sus archivos. El bootstrap clona por HTTPS, actualiza `main` solo mediante
-fast-forward y conserva cualquier cambio local sin aplicar `reset` ni `clean`.
-
-## Instalación manual y perfiles
+### Manual HTTPS installation
 
 ```bash
-git clone https://github.com/llaurator/dotfiles.git ~/dotfiles
-cd ~/dotfiles
+git clone https://github.com/llaurator/dotfiles.git \
+  "${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles"
+cd "${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles"
 ./install.sh
 ```
 
-El modo interactivo ofrece `personal`, `work` y `server`. Para automatización:
+## Profiles
+
+The installer offers three profiles:
+
+- `personal` — desktop-oriented setup, including SSH and VS Code configuration.
+- `work` — desktop-oriented setup, including SSH and VS Code configuration.
+- `server` — avoids the repository's SSH client configuration, VS Code, and desktop configuration.
+
+Non-interactive examples:
 
 ```bash
 ./install.sh --profile personal --yes
 ./install.sh --profile work --yes
 ./install.sh --profile server --yes
-./install.sh --profile personal --yes --install-vscode
 ```
 
-`--yes` requiere `--profile` y omite las preguntas propias del instalador; no activa por sí
-solo la instalación opcional de VS Code. Para automatizar ese opt-in en `personal`/`work`
-se usa `--install-vscode`. Cuando hacen falta privilegios, el instalador valida `sudo` una
-sola vez y reutiliza su timestamp normal tanto para el gestor como para `chsh`; no mantiene
-el timestamp artificialmente. El perfil se guarda en `~/.config/dotfiles/profile` y `.zshrc` lo carga en cada
-sesión. `personal` y `work` incluyen la capa opcional `development.zsh`; `server` evita SSH
-cliente del repositorio, VS Code y configuración de escritorio.
+`--yes` requires `--profile` and accepts the installer's confirmations. It does not opt in to VS Code installation.
 
-Los perfiles `personal` y `work` instalan también MesloLGS Nerd Font (cuatro variantes).
-En Linux descargan únicamente esos cuatro TTF desde el tag oficial `v3.5.1` de Nerd Fonts
-y verifican sus SHA-256 fijados antes de moverlos atómicamente al directorio de fuentes;
-en macOS usan el cask mantenido `font-meslo-lg-nerd-font`. No se cambia la fuente
-configurada del terminal.
+## Installer commands
 
-El sistema se detecta con `uname` y el gestor disponible. Git, Stow y Zsh son esenciales.
-fzf, fd, zoxide, eza, bat, ripgrep, btop, grc, git-delta y direnv se obtienen del gestor
-nativo cuando están disponibles. Debian/Ubuntu y Fedora avisan y continúan si falta un
-paquete opcional. Debian crea los nombres compatibles `fd`/`bat` para `fdfind`/`batcat`.
-Arch usa `pacman -S --needed`, sin AUR ni actualización completa forzada. macOS conserva
-el Zsh del sistema y requiere Homebrew.
-
-Oh My Zsh, Powerlevel10k, zsh-autosuggestions, zsh-history-substring-search y
-zsh-syntax-highlighting se clonan directamente desde upstream. Powerlevel10k se carga
-desde `~/.oh-my-zsh/custom/themes/powerlevel10k`, su instant prompt permanece al principio
-de `.zshrc` y `.p10k.zsh` se carga al final. Las herramientas opcionales nunca son un
-requisito para abrir Zsh.
-
-## Estructura Stow
-
-- `zsh`: `.zshrc`, configuración completa de Powerlevel10k y módulos por plataforma/perfil.
-- `git`: configuración común, sin identidad.
-- `btop`: configuración mínima.
-- `ssh`: cliente y `config.d`, solo para `personal`/`work`.
-- `vscode`: única fuente versionada de settings y extensiones, solo para desktop.
-
-El despliegue usa `--restow --no-folding`: no convierte `~/.ssh` o `~/.config` completos
-en enlaces. Antes de invocar Stow, un preflight lista los archivos reales que entrarían en
-conflicto y cancela por defecto. Nunca usa `stow --adopt` ni sobrescribe esos archivos.
-
-## Baseline y restauración
-
-La primera instalación nueva crea una baseline por ciclo en
-`${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/cycles/`. Su manifest versionado registra
-solo las rutas que el instalador puede gestionar, conserva archivos, directorios y symlinks
-previos, y mantiene huellas para detectar modificaciones posteriores. Una segunda instalación
-reutiliza la baseline activa; después de restaurarla, una instalación nueva crea otro ciclo.
-
-Los conflictos de Stow siguen cancelando de forma predeterminada. En modo interactivo se puede
-elegir «Hacer copia de seguridad y continuar»; en automatización requiere intención explícita:
-
-```bash
-./install.sh --profile personal --yes --backup-conflicts
+```text
+-p, --profile PROFILE   personal | work | server
+-y, --yes               Do not ask for confirmation
+    --migrate-bash-history
+                        Import ~/.bash_history into ~/.zsh_history
+    --uninstall         Remove managed dotfiles and restore the available baseline
+    --keep-packages     With --uninstall, keep packages, upstream clones, and fonts
+    --status            Show status without changing files
+    --backup-conflicts  Explicitly back up Stow conflicts before installation
+    --install-vscode    Explicitly install VS Code for personal/work where supported
+    --dry-run           Simulate history migration or uninstall
+-h, --help              Show help
 ```
 
-Para inspeccionar o restaurar:
+Useful commands:
 
 ```bash
 ./install.sh --status
 ./install.sh --uninstall --dry-run
 ./install.sh --uninstall
 ./install.sh --uninstall --keep-packages
-./install.sh --uninstall --yes
+./install.sh --migrate-bash-history
+./install.sh --migrate-bash-history --dry-run
+./install.sh --profile personal --yes --backup-conflicts
+./install.sh --profile work --yes --install-vscode
 ```
 
-La restauración solo retira enlaces o archivos que todavía pueda demostrar como propios. Si una
-ruta fue sustituida o modificada después, aborta antes de sobrescribirla. Las instalaciones
-anteriores al sistema de baseline se reconocen como tales: solo pueden retirar enlaces Stow
-verificables y no prometen reconstruir un estado previo desconocido.
+`--dry-run` is only valid with `--migrate-bash-history` or `--uninstall`. `--backup-conflicts` and `--install-vscode` are install-only options.
 
-Por defecto, una baseline de formato 2 restaura el shell solo si aún coincide con el que puso
-el ciclo. Antes y después de cada bloque o transacción del gestor guarda un snapshot ordenado
-del conjunto completo de paquetes instalados, junto con su SHA-256, y atribuye únicamente los
-nombres que aparecen en la diferencia. Esto incluye dependencias normales y débiles sin inferir
-ownership a partir del grafo actual. No usa `autoremove`; la retirada enumera explícitamente la
-diferencia registrada y, si el preflight detecta retiradas laterales no registradas, aborta.
-También puede retirar clones upstream intactos, fuentes atribuibles por huella y directorios
-creados que hayan quedado vacíos. `--keep-packages` conserva paquetes, clones upstream y fuentes,
-realizando solo el rollback de configuración, shell y directorios. Las baselines v2 anteriores
-que no contienen snapshots siguen siendo válidas, pero no se completan retrospectivamente: no
-existe evidencia suficiente para atribuir dependencias históricas ausentes de `packages.tsv`.
-Las baselines de formato 1 mantienen el rollback conservador antiguo y no inventan estado
-previo ausente.
+## What installation changes
 
-Nunca se eliminan el repositorio ni extensiones de VS Code. Tampoco se revierten
-`.bash_history`, `.zsh_history` o su backup de migración, y nunca se toca la
-configuración local `~/.ssh/config.d/*.conf`. Para VS Code, la baseline es la fuente de verdad
-del rollback; `settings.json.pre-dotfiles` se registra como ruta gestionada dentro del mismo
-ciclo cuando el instalador lo crea. Por seguridad, tampoco se revierte automáticamente
-una modificación posterior del usuario. Los modes de directorios se restauran únicamente si
-siguen coincidiendo con el valor aplicado por el instalador.
+The installer detects macOS or Linux and uses the available supported package manager. It installs required tools such as Git, Stow, Zsh, and `jq`, plus available optional command-line tools. It deploys the selected Stow packages, writes the active profile, installs Zsh components from their upstream repositories, and attempts to make Zsh the login shell.
 
-En Fedora, si el ciclo creó `/etc/yum.repos.d/vscode.repo`, también registra su huella y
-solo lo retira después del paquete `code` cuando continúa intacto. Un fichero preexistente
-o modificado se conserva. `--keep-packages` conserva ambos. La clave RPM de Microsoft no
-se elimina: el sistema RPM no permite demostrar de forma segura que ningún otro repositorio
-o paquete la utiliza.
+Before Stow runs, conflicts are listed and installation stops by default. It never uses `stow --adopt` and does not overwrite a conflict unless `--backup-conflicts` is explicitly requested.
 
-Dry-run contra un HOME temporal:
+## Uninstall and rollback
 
-```bash
-tmp_home="$(mktemp -d)"
-stow -n -v --no-folding --dir="$PWD" --target="$tmp_home" zsh git btop ssh vscode
+Every new installation cycle creates a baseline under:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/cycles/
 ```
 
-Para retirar un paquete:
+Baseline format v2 records the managed configuration paths and their previous state, fingerprints of installer-managed changes, the prior login shell, package snapshots before and after package transactions, upstream clones, installed fonts, and created directories and modes. The package snapshots allow it to attribute package changes—including recorded dependencies—without guessing from the package graph at uninstall time.
 
-```bash
-stow -D --no-folding --dir="$PWD" --target="$HOME" zsh
-```
+`--uninstall` first verifies that managed files still match what the cycle installed. It restores the recorded configuration and prior shell only when safe, and removes only attributable packages, intact upstream clones, attributable fonts, and empty created directories. If a path was changed after installation, it stops rather than overwriting it. It does not use `autoremove`; package removal is explicit and has a preflight for unrecorded side effects. `--keep-packages` performs the configuration, shell, and directory rollback while retaining packages, upstream clones, and fonts.
 
-En una máquina con `~/.zshrc`, `~/.p10k.zsh`, `~/.gitconfig` o `~/.ssh/config`
-preexistentes, compáralos y respáldalos o migra su contenido manualmente. **No uses
-`stow --adopt` a ciegas**: puede introducir datos locales y secretos en el repositorio.
+The following are deliberately preserved: Bash and Zsh histories (including the migration backup), the dotfiles checkout, VS Code extensions, and private SSH configuration in `~/.ssh/config.d/*.conf`. Existing or later user changes are not automatically overwritten during rollback.
 
-## Git
-
-`git/.gitconfig` contiene únicamente opciones comunes y carga
-`~/.config/git/local.gitconfig`. Tras desplegar Stow, el instalador conserva la identidad
-efectiva si ya existen `user.name` y `user.email`. Si falta alguno, el modo interactivo
-ofrece configurarla con respuesta predeterminada «no». Solo añade las claves ausentes al
-fichero local mediante `git config --file`, conserva el resto y aplica modo `0600`.
-
-En modo `--yes` nunca pregunta por la identidad: avisa si está incompleta y continúa sin
-inventar valores. `local.gitconfig` está ignorado y no se versiona.
-
-## SSH y secretos
-
-`ssh/.ssh/config` es genérico e incluye `~/.ssh/config.d/*`. Solo los `*.example` vacíos
-se versionan; los `*.conf` reales son locales. El instalador crea `~/.ssh` y `config.d`
-con modo `0700`, sin generar hosts ni claves ni reemplazar configuraciones locales. Si no
-hay ningún `*.conf` local tras el despliegue, muestra un mensaje informativo para recordar
-que se pueden copiar y adaptar los ejemplos; esa situación no se considera un error.
-
-Claves privadas y públicas, `known_hosts`, `authorized_keys`, sockets, tokens y `.env`
-están ignorados. Revisa siempre `git status` antes de confirmar cambios.
+Older baselines are handled conservatively: a v1 baseline can remove verifiable Stow links, but cannot reconstruct unknown prior state.
 
 ## VS Code
 
-La lista versionada contiene exclusivamente Prettier, Ruff, Python Environments, Spanish
-Language Pack y Dracula Official. Para `personal`/`work`, el instalador fusiona además
-`{"locale":"es"}` en `locale.json`, conservando cualquier otra clave. La baseline restaura
-exactamente el fichero anterior al desinstalar y la operación es idempotente. Python
-Environments descubre y permite seleccionar los entornos virtuales de los proyectos Python,
-incluidos los directorios `.venv`. Las extensiones ya instaladas se detectan sin distinguir
-mayúsculas y minúsculas, y solo se invoca la instalación para las ausentes. `settings.json`
-activa formato al guardar, Prettier para JS, TS, JSON, CSS y HTML, Ruff para Python, limpieza
-de espacios, newline final, regla a 100, minimapa desactivado y `Dracula Theme`.
+VS Code is optional. If `code` already exists, the installer configures it without claiming ownership of its package. Explicit installation is available with `--install-vscode` for `personal` and `work` on macOS, Arch, and Fedora; Debian/Ubuntu does not add a VS Code repository automatically.
 
-Si `code` no existe, la instalación interactiva ofrece instalarlo con respuesta predeterminada
-«no»; `--yes` lo omite salvo que se añada `--install-vscode`. `server` nunca pregunta ni lo
-instala. En macOS el opt-in usa el cask `visual-studio-code`; en Arch, el paquete `code` de
-la distribución. Fedora crea únicamente el repositorio oficial de Microsoft, verifica por
-SHA-256 la clave oficial y solicita el paquete `code`. Debian/Ubuntu conserva el comportamiento
-conservador y no añade repositorios automáticamente. Si `code` ya existía, nunca entra en el
-tracking de paquetes del ciclo. La fuente de settings es única. El instalador enlaza a
-`~/.config/dotfiles/vscode/settings.json` mediante Stow y aplica su contenido a
-`~/Library/Application Support/Code/User/settings.json` en macOS o a
-`${XDG_CONFIG_HOME:-~/.config}/Code/User/settings.json` en Linux. Nunca reemplaza un
-archivo local a ciegas: valida con `jq` y fusiona las claves locales con las gestionadas,
-dando prioridad a estas últimas cuando coinciden. Conserva las claves locales adicionales,
-crea una única copia original `settings.json.pre-dotfiles` y reemplaza el destino mediante un
-temporal validado. Si el JSON local no es válido, lo deja intacto, avisa y continúa con el
-resto de la instalación. `jq` se instala como dependencia del sistema.
+The installer merges managed settings instead of blindly replacing valid local JSON, configures the Spanish locale, and installs only missing extensions: Prettier, Ruff, Python Environments, Spanish Language Pack, and Dracula Official. The managed settings select Dracula and enable the repository's formatting defaults. If local VS Code JSON is invalid, it is left unchanged.
 
-## Desarrollo y macOS
+## SSH and private data
 
-`development.zsh` detecta pyenv, Android SDK, Flutter, Java, Miniconda y thefuck antes de
-cargarlos. `macos.zsh`, cargado antes de `common.zsh`, busca Homebrew en
-`/opt/homebrew/bin/brew`, `/usr/local/bin/brew` y finalmente en `PATH`, y ejecuta
-`brew shellenv` una sola vez.
+The versioned SSH configuration is generic and includes `~/.ssh/config.d/*`. Real `config.d/*.conf` files, keys, `known_hosts`, and secrets are local-only and must never be committed. The installer does not generate SSH keys or hosts, and it does not replace private local SSH configuration.
 
-## Probar cambios
+Git identity is likewise stored locally in `~/.config/git/local.gitconfig` when configured through the interactive installer; it is not versioned.
 
-Antes de desplegar, ejecuta:
+## Bash to Zsh history migration
 
-```bash
-bash -n bootstrap.sh install.sh scripts/*.sh tests/*.sh
-zsh -n zsh/.zshrc zsh/.config/zsh/*.zsh
-git diff --check
-./install.sh --help
-```
-
-Si están disponibles, añade `shellcheck bootstrap.sh install.sh scripts/*.sh tests/*.sh` y
-`jq empty` sobre
-`vscode/.config/dotfiles/vscode/settings.json`, además del dry-run temporal anterior.
-`./install.sh --help` solo muestra ayuda; no instala nada.
-
-## Migrar el historial de Bash
-
-La migración es una operación explícita y separada de la instalación normal:
+Migration is explicit and separate from normal installation:
 
 ```bash
 ./install.sh --migrate-bash-history
-./install.sh --migrate-bash-history --dry-run
 ```
 
-Importa comandos únicos de `~/.bash_history` en `~/.zsh_history`, conserva el historial Zsh
-y crea una única copia inicial `~/.zsh_history.pre-bash-migration`. El fichero Bash nunca se
-modifica. Los timestamps de Bash se descartan y las entradas nuevas se escriben en el formato
-extendido que usa `SHARE_HISTORY`. Antes de importar se omiten patrones evidentes de posibles
-secretos y solo se muestran estadísticas, nunca los comandos. Este filtro es conservador y no
-garantiza detectar todos los secretos; revisa el historial de origen antes de migrarlo.
+It imports unique Bash commands into Zsh's extended history format, preserves the Bash history, and makes one initial `~/.zsh_history.pre-bash-migration` backup. It filters obvious secret-like entries and reports counts rather than commands, but that filter is not a guarantee: inspect the source history before migrating it.
+
+## Supported systems
+
+The installer contains platform paths for:
+
+- macOS (Homebrew is required)
+- Fedora
+- Arch Linux
+- Debian and derivatives, including Ubuntu
+
+Support is limited to the platform and package-manager combinations implemented by the scripts. Other Linux distributions are rejected; no claim is made for untested systems.
 
 ## Releases
 
-Cada push a `main` ejecuta semantic-release en GitHub Actions. Los commits `feat` generan
-una versión minor; `fix`, `perf`, `security` y `revert`, una patch; y cualquier breaking
-change, una major. `docs`, `refactor`, `chore`, `build`, `ci` y `test` aparecen en las notas
-cuando existe una release, pero no crean una versión por sí solos.
+Releases are automated with `semantic-release` and [Conventional Commits](https://www.conventionalcommits.org/). Use conventional commit messages for changes: `feat` produces a minor release, `fix`, `perf`, `security`, and `revert` produce a patch release, and breaking changes produce a major release. Documentation and maintenance commit types contribute release notes when a release is made but do not create one by themselves.
 
-El workflow crea el tag `vX.Y.Z`, actualiza `CHANGELOG.md`, confirma ese cambio con
-`[skip ci]` y publica la GitHub Release usando únicamente el `GITHUB_TOKEN` del repositorio.
-No publica paquetes npm y no se ejecuta para pull requests.
+## Contributing
+
+Issues and focused pull requests are welcome. Keep changes portable across the supported platforms, do not add personal data or secrets, and run the relevant syntax or targeted checks before opening a pull request.
