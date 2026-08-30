@@ -565,8 +565,8 @@ is_conflict_relative() {
   return 1
 }
 
-plan_reversible_install() {
-  local profile="$1" index target source answer
+prepare_reversible_install() {
+  local profile="$1" index target source
   validate_home_and_state
   stow_packages_for_profile "$profile"
   collect_stow_entries
@@ -591,6 +591,11 @@ plan_reversible_install() {
     BASELINE_MODE='legacy'
     info 'Esta instalación es anterior al sistema de rollback; no existe una baseline pre-dotfiles completa.'
   fi
+  return 0
+}
+
+resolve_install_conflicts() {
+  local relative answer
   (( ${#CONFLICT_RELS[@]} > 0 )) || return 0
   warn 'Se han encontrado configuraciones existentes:'
   printf '  - ~/%s\n' "${CONFLICT_RELS[@]}" >&2
@@ -611,6 +616,11 @@ plan_reversible_install() {
   printf '\n¿Qué quieres hacer?\n  1) Cancelar [recomendado]\n  2) Hacer copia de seguridad y continuar\n\n' >&2
   if ! read -r -p '> ' answer || [[ "$answer" != 2 ]]; then die 'Instalación cancelada; no se ha movido ningún conflicto.'; fi
   BACKUP_CONFLICTS=1
+}
+
+plan_reversible_install() {
+  prepare_reversible_install "$1"
+  resolve_install_conflicts
 }
 
 begin_reversible_install() {

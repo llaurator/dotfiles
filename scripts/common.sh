@@ -9,6 +9,36 @@ install_common_components(){
   install_git_repo https://github.com/zsh-users/zsh-history-substring-search.git "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
 }
 profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
+upstream_component_status() {
+  local name="$1" destination="$2"
+  if [[ -d "$destination/.git" ]]; then printf '  ✓ %s (ya existe)\n' "$name"; else printf '  + %s\n' "$name"; fi
+}
+print_install_preflight() {
+  local profile="$1" package
+  get_system_packages
+  printf '%sPreflight (solo lectura):%s\n' "$BOLD" "$RESET"
+  printf '\nPaquetes:\n'
+  for package in "${SYSTEM_PACKAGES[@]}"; do
+    if package_is_installed "$package"; then printf '  ✓ %s (ya instalado)\n' "$package"; else printf '  + %s\n' "$package"; fi
+  done
+  printf '\nSe configurará:\n  • Zsh\n  • Git\n  • dotfiles con Stow\n'
+  [[ "$profile" == server ]] || printf '  • SSH cliente\n  • VS Code si está disponible\n'
+  printf '\nUpstream Zsh:\n'
+  upstream_component_status 'Oh My Zsh' "$HOME/.oh-my-zsh"
+  upstream_component_status 'Powerlevel10k' "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
+  upstream_component_status 'zsh-autosuggestions' "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+  upstream_component_status 'zsh-syntax-highlighting' "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+  upstream_component_status 'zsh-history-substring-search' "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
+  if (( ${#CONFLICT_RELS[@]} )); then
+    printf '\nConflictos Stow:\n'
+    for package in "${CONFLICT_RELS[@]}"; do printf '  ! ~/%s ya existe y no está gestionado por dotfiles\n' "$package"; done
+    if [[ "$BACKUP_CONFLICTS" -eq 1 ]]; then
+      printf '  Se respaldarán solo después de confirmar.\n'
+    else
+      printf '  No se sobrescribirán; la instalación requerirá cancelar o autorizar una copia de seguridad.\n'
+    fi
+  fi
+}
 # shellcheck disable=SC2034 # Consumida por los scripts de plataforma después de source.
 select_vscode_install() {
   local profile="$1" answer prompt

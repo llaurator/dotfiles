@@ -226,7 +226,12 @@ main() {
     prepare_repository "$requested_ref"
     success "Repositorio disponible en $DOTFILES_DIR"
     info 'Ejecutando instalador...'
-    "$DOTFILES_DIR/install.sh" "${installer_args[@]}"
+    if { : < /dev/tty; } 2>/dev/null; then
+        "$DOTFILES_DIR/install.sh" "${installer_args[@]}" < /dev/tty
+    else
+        info 'No hay terminal controladora usable; el instalador conservará stdin.'
+        "$DOTFILES_DIR/install.sh" "${installer_args[@]}"
+    fi
 }
 
 main "$@"

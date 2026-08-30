@@ -138,7 +138,21 @@ printf '  Distro:   %s\n' "$DOTFILES_DISTRO"
 printf '  Arch:     %s\n' "$DOTFILES_ARCH"
 printf '  Host:     %s\n' "$DOTFILES_HOST"
 printf '  Perfil:   %s\n\n' "$PROFILE"
-print_plan "$PROFILE"
+
+case "$DOTFILES_OS" in
+    macos) source "$ROOT_DIR/scripts/macos.sh" ;;
+    linux)
+        case "$DOTFILES_DISTRO" in
+            arch) source "$ROOT_DIR/scripts/arch.sh" ;;
+            fedora) source "$ROOT_DIR/scripts/fedora.sh" ;;
+            debian) source "$ROOT_DIR/scripts/debian.sh" ;;
+            *) die "Distribución Linux no soportada: $DOTFILES_DISTRO" ;;
+        esac
+        ;;
+esac
+
+prepare_reversible_install "$PROFILE"
+print_install_preflight "$PROFILE"
 
 if [[ "$ASSUME_YES" -ne 1 ]]; then
     printf '\n'
@@ -152,21 +166,10 @@ fi
 select_vscode_install "$PROFILE"
 select_konsole_configure "$PROFILE"
 
-plan_reversible_install "$PROFILE"
+resolve_install_conflicts
 begin_reversible_install "$PROFILE"
 
 info "Instalando paquetes del sistema..."
-case "$DOTFILES_OS" in
-    macos) source "$ROOT_DIR/scripts/macos.sh" ;;
-    linux)
-        case "$DOTFILES_DISTRO" in
-            arch) source "$ROOT_DIR/scripts/arch.sh" ;;
-            fedora) source "$ROOT_DIR/scripts/fedora.sh" ;;
-            debian) source "$ROOT_DIR/scripts/debian.sh" ;;
-            *) die "Distribución Linux no soportada: $DOTFILES_DISTRO" ;;
-        esac
-        ;;
-esac
 record_packages_before
 install_system_packages
 record_packages_after
