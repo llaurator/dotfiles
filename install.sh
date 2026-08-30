@@ -4,11 +4,16 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_ROOT="$ROOT_DIR"
 source "$ROOT_DIR/scripts/lib.sh"
+source "$ROOT_DIR/scripts/common.sh"
+source "$ROOT_DIR/scripts/state.sh"
 
 PROFILE=""
 ASSUME_YES=0
 MIGRATE_BASH_HISTORY=0
 DRY_RUN=0
+UNINSTALL=0
+SHOW_STATUS=0
+BACKUP_CONFLICTS=0
 
 usage() {
     cat <<'HELP'
@@ -17,6 +22,10 @@ Uso:
   ./install.sh --profile personal
   ./install.sh --profile work --yes
   ./install.sh --profile server --yes
+  ./install.sh --profile server --yes --backup-conflicts
+  ./install.sh --uninstall
+  ./install.sh --uninstall --dry-run
+  ./install.sh --status
   ./install.sh --migrate-bash-history
   ./install.sh --migrate-bash-history --dry-run
 
@@ -25,7 +34,10 @@ Opciones:
   -y, --yes               No pedir confirmación
       --migrate-bash-history
                           Importar de forma segura ~/.bash_history en ~/.zsh_history
-      --dry-run           Mostrar estadísticas de la migración sin modificar archivos
+      --uninstall         Retirar dotfiles y restaurar la baseline disponible
+      --status            Mostrar el estado sin modificar archivos
+      --backup-conflicts  Respaldar conflictos explícitamente antes de instalar
+      --dry-run           Simular migración o desinstalación sin modificar archivos
   -h, --help              Mostrar ayuda
 HELP
 }
@@ -35,24 +47,51 @@ while [[ $# -gt 0 ]]; do
         -p|--profile) [[ $# -ge 2 ]] || die "Falta el valor de --profile"; PROFILE="$2"; shift 2 ;;
         -y|--yes) ASSUME_YES=1; shift ;;
         --migrate-bash-history) MIGRATE_BASH_HISTORY=1; shift ;;
+        --uninstall) UNINSTALL=1; shift ;;
+        --status) SHOW_STATUS=1; shift ;;
+        --backup-conflicts) BACKUP_CONFLICTS=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Opción desconocida: $1" ;;
     esac
 done
 
-if [[ "$DRY_RUN" -eq 1 && "$MIGRATE_BASH_HISTORY" -ne 1 ]]; then
-    die '--dry-run solo puede usarse con --migrate-bash-history.'
+explicit_actions=$((MIGRATE_BASH_HISTORY + UNINSTALL + SHOW_STATUS))
+(( explicit_actions <= 1 )) || die 'Elige una única acción: instalar, migrar, desinstalar o estado.'
+if (( explicit_actions > 0 )) && [[ -n "$PROFILE" ]]; then
+    die 'Las acciones --migrate-bash-history, --uninstall y --status no aceptan --profile.'
 fi
-if [[ "$MIGRATE_BASH_HISTORY" -eq 1 ]]; then
-    [[ -z "$PROFILE" ]] || die '--migrate-bash-history no puede combinarse con --profile.'
+if [[ "$DRY_RUN" -eq 1 && "$MIGRATE_BASH_HISTORY" -ne 1 && "$UNINSTALL" -ne 1 ]]; then
+    die '--dry-run solo puede usarse con --migrate-bash-history o --uninstall.'
+fi
+if [[ "$BACKUP_CONFLICTS" -eq 1 ]] && (( explicit_actions > 0 )); then
+    die '--backup-conflicts solo puede usarse al instalar.'
+fi
+
+print_banner
+ACTION='install'
+if (( explicit_actions == 0 )) && [[ -z "$PROFILE" && "$ASSUME_YES" -eq 0 && "$BACKUP_CONFLICTS" -eq 0 ]]; then
+    ACTION="$(choose_action)"
+elif [[ "$MIGRATE_BASH_HISTORY" -eq 1 ]]; then
+    ACTION='migrate'
+elif [[ "$UNINSTALL" -eq 1 ]]; then
+    ACTION='uninstall'
+elif [[ "$SHOW_STATUS" -eq 1 ]]; then
+    ACTION='status'
+fi
+
+case "$ACTION" in
+  exit) info 'Hasta la próxima.'; exit 0 ;;
+  status) show_dotfiles_status; exit 0 ;;
+  uninstall) uninstall_dotfiles "$DRY_RUN"; exit 0 ;;
+  migrate)
     source "$ROOT_DIR/scripts/history.sh"
     migrate_bash_history "$DRY_RUN"
     exit 0
-fi
+    ;;
+esac
 
 detect_platform
-print_banner
 
 if [[ "$ASSUME_YES" -eq 1 && -z "$PROFILE" ]]; then
     die 'El modo --yes requiere --profile personal|work|server.'
@@ -78,6 +117,8 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
     esac
 fi
 
+plan_reversible_install "$PROFILE"
+
 info "Instalando paquetes del sistema..."
 case "$DOTFILES_OS" in
     macos) source "$ROOT_DIR/scripts/macos.sh" ;;
@@ -92,12 +133,15 @@ case "$DOTFILES_OS" in
 esac
 install_system_packages
 
-source "$ROOT_DIR/scripts/common.sh"
 install_common_components
+begin_reversible_install "$PROFILE"
 write_profile "$PROFILE"
+mark_path_if_changed '.config/dotfiles/profile' profile '-'
 deploy_stow_packages "$PROFILE"
 configure_git_identity
+mark_path_if_changed '.config/git/local.gitconfig' git '-'
 configure_vscode "$PROFILE"
+mark_vscode_paths_if_changed "$PROFILE"
 ensure_zsh_shell
 
 success "Instalación terminada."

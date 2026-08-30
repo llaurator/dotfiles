@@ -1,0 +1,757 @@
+#!/usr/bin/env bash
+
+readonly BASELINE_FORMAT_VERSION='1'
+STOW_PACKAGES=()
+CONFLICT_RELS=()
+CONFLICT_SOURCES=()
+BASELINE_MODE='none'
+ACTIVE_CYCLE=''
+ACTIVE_CYCLE_DIR=''
+STATE_ROOT=''
+MANIFEST_FILE=''
+OWNERSHIP_FILE=''
+
+validate_home_and_state() {
+  local state_base
+  [[ -n "${HOME:-}" && "$HOME" == /* && "$HOME" != '/' ]] ||
+    die 'HOME debe ser una ruta absoluta segura distinta de /.'
+  [[ "$HOME" != *$'\n'* && "$HOME" != *$'\t'* ]] || die 'HOME contiene caracteres no permitidos.'
+  [[ -d "$HOME" ]] || die "HOME no existe: $HOME"
+
+  state_base="${XDG_STATE_HOME:-$HOME/.local/state}"
+  [[ "$state_base" != '/' ]] || die 'XDG_STATE_HOME no puede ser /.'
+  STATE_ROOT="$state_base/dotfiles"
+  [[ -n "$STATE_ROOT" && "$STATE_ROOT" == /* && "$STATE_ROOT" != '/' ]] ||
+    die 'XDG_STATE_HOME debe producir una ruta absoluta segura.'
+  [[ "$STATE_ROOT" != *$'\n'* && "$STATE_ROOT" != *$'\t'* ]] ||
+    die 'La ruta de estado contiene caracteres no permitidos.'
+  if [[ -e "$STATE_ROOT" || -L "$STATE_ROOT" ]]; then
+    [[ -d "$STATE_ROOT" && ! -L "$STATE_ROOT" ]] || die 'El directorio de estado es inseguro.'
+  fi
+  if [[ -e "$STATE_ROOT/cycles" || -L "$STATE_ROOT/cycles" ]]; then
+    [[ -d "$STATE_ROOT/cycles" && ! -L "$STATE_ROOT/cycles" ]] || die 'El directorio de ciclos es inseguro.'
+  fi
+}
+
+validate_relative_path() {
+  local relative="$1" remaining component
+  [[ -n "$relative" && "$relative" != /* && "$relative" != */ ]] || return 1
+  [[ "$relative" != *$'\n'* && "$relative" != *$'\t'* ]] || return 1
+  remaining="$relative"
+  while :; do
+    component="${remaining%%/*}"
+    [[ -n "$component" && "$component" != '.' && "$component" != '..' ]] || return 1
+    [[ "$remaining" == */* ]] || break
+    remaining="${remaining#*/}"
+  done
+}
+
+validate_target_containment() {
+  local relative="$1" remaining component current home_physical current_physical
+  validate_relative_path "$relative" || die "Ruta relativa no válida en baseline: $relative"
+  home_physical="$(cd -P -- "$HOME" && pwd)"
+  current="$HOME"
+  remaining="$relative"
+  while [[ "$remaining" == */* ]]; do
+    component="${remaining%%/*}"
+    remaining="${remaining#*/}"
+    current="$current/$component"
+    if [[ -e "$current" || -L "$current" ]]; then
+      [[ -d "$current" ]] || die "Un componente padre no es un directorio: ~/${relative}"
+      current_physical="$(cd -P -- "$current" && pwd)"
+      case "$current_physical" in
+        "$home_physical"|"$home_physical"/*) ;;
+        *) die "La ruta escapa del HOME mediante un enlace: ~/${relative}" ;;
+      esac
+    fi
+  done
+}
+
+path_type() {
+  if [[ -L "$1" ]]; then printf 'symlink'
+  elif [[ -f "$1" ]]; then printf 'file'
+  elif [[ -d "$1" ]]; then printf 'directory'
+  elif [[ ! -e "$1" ]]; then printf 'missing'
+  else printf 'unsupported'
+  fi
+}
+
+path_mode() {
+  if stat -f '%Lp' "$1" >/dev/null 2>&1; then
+    stat -f '%Lp' "$1"
+  else
+    stat -c '%a' "$1"
+  fi
+}
+
+path_fingerprint() {
+  local target="$1" type mode checksum size link_target
+  type="$(path_type "$target")"
+  case "$type" in
+    missing) printf 'missing' ;;
+    file)
+      mode="$(path_mode "$target")"
+      checksum="$(sha256_stream < "$target")"
+      size="$(wc -c < "$target" | tr -d '[:space:]')"
+      printf 'file:%s:%s:%s' "$checksum" "$size" "$mode"
+      ;;
+    symlink)
+      link_target="$(readlink "$target")"
+      checksum="$(printf '%s' "$link_target" | sha256_stream)"
+      size="${#link_target}"
+      printf 'symlink:%s:%s' "$checksum" "$size"
+      ;;
+    directory)
+      mode="$(path_mode "$target")"
+      checksum="$(tar -cf - -C "${target%/*}" "${target##*/}" | sha256_stream)"
+      printf 'directory:%s:%s' "$checksum" "$mode"
+      ;;
+    *) printf 'unsupported' ;;
+  esac
+}
+
+sha256_stream() {
+  if command_exists sha256sum; then
+    sha256sum | awk '{ print $1 }'
+  elif command_exists shasum; then
+    shasum -a 256 | awk '{ print $1 }'
+  else
+    die 'Se necesita sha256sum o shasum para verificar la baseline.'
+  fi
+}
+
+stow_link_is_managed() {
+  local target="$1" source="$2"
+  [[ -L "$target" && -e "$source" && "$target" -ef "$source" ]]
+}
+
+stow_packages_for_all_profiles() {
+  STOW_PACKAGES=(zsh git btop ssh vscode)
+}
+
+collect_stow_entries() {
+  local package source relative
+  STOW_ENTRY_PACKAGES=()
+  STOW_ENTRY_RELS=()
+  STOW_ENTRY_SOURCES=()
+  for package in "${STOW_PACKAGES[@]}"; do
+    [[ -d "$DOTFILES_ROOT/$package" ]] || die "Paquete Stow inexistente: $package"
+    while IFS= read -r -d '' source; do
+      relative="${source#"$DOTFILES_ROOT/$package/"}"
+      validate_target_containment "$relative"
+      STOW_ENTRY_PACKAGES+=("$package")
+      STOW_ENTRY_RELS+=("$relative")
+      STOW_ENTRY_SOURCES+=("$package/$relative")
+    done < <(find "$DOTFILES_ROOT/$package" -type f -print0)
+  done
+}
+
+managed_dotfiles_exist() {
+  local package source relative target
+  for package in zsh git btop ssh vscode; do
+    while IFS= read -r -d '' source; do
+      relative="${source#"$DOTFILES_ROOT/$package/"}"
+      validate_target_containment "$relative"
+      target="$HOME/$relative"
+      stow_link_is_managed "$target" "$source" && return 0
+    done < <(find "$DOTFILES_ROOT/$package" -type f -print0)
+  done
+  return 1
+}
+
+load_active_pointer() {
+  local line_count
+  ACTIVE_CYCLE=''
+  ACTIVE_CYCLE_DIR=''
+  MANIFEST_FILE=''
+  OWNERSHIP_FILE=''
+  [[ -e "$STATE_ROOT/active" ]] || return 0
+  [[ -f "$STATE_ROOT/active" && ! -L "$STATE_ROOT/active" ]] || die 'El puntero de baseline no es un archivo regular.'
+  line_count="$(wc -l < "$STATE_ROOT/active" | tr -d '[:space:]')"
+  [[ "$line_count" == 1 ]] || die 'El puntero de baseline está corrupto.'
+  IFS= read -r ACTIVE_CYCLE < "$STATE_ROOT/active" || die 'No se pudo leer el installation_id activo.'
+  [[ "$ACTIVE_CYCLE" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] ||
+    die 'El installation_id activo no es válido.'
+  ACTIVE_CYCLE_DIR="$STATE_ROOT/cycles/$ACTIVE_CYCLE"
+  MANIFEST_FILE="$ACTIVE_CYCLE_DIR/manifest.tsv"
+  OWNERSHIP_FILE="$ACTIVE_CYCLE_DIR/ownership.tsv"
+}
+
+validate_metadata() {
+  local metadata="$ACTIVE_CYCLE_DIR/metadata.tsv" key value extra count=0
+  local format='' installation_id='' metadata_home='' profile='' repo='' commit='' created=''
+  [[ -f "$metadata" && ! -L "$metadata" ]] || die 'Metadata de baseline ausente o insegura.'
+  while IFS=$'\t' read -r key value extra; do
+    [[ -n "$key" && -n "$value" && -z "$extra" ]] || die 'Metadata de baseline corrupta.'
+    case "$key" in
+      format_version) [[ -z "$format" ]] || die 'Metadata duplicada.'; format="$value" ;;
+      installation_id) [[ -z "$installation_id" ]] || die 'Metadata duplicada.'; installation_id="$value" ;;
+      home) [[ -z "$metadata_home" ]] || die 'Metadata duplicada.'; metadata_home="$value" ;;
+      profile) [[ -z "$profile" ]] || die 'Metadata duplicada.'; profile="$value" ;;
+      repo) [[ -z "$repo" ]] || die 'Metadata duplicada.'; repo="$value" ;;
+      commit) [[ -z "$commit" ]] || die 'Metadata duplicada.'; commit="$value" ;;
+      created_at) [[ -z "$created" ]] || die 'Metadata duplicada.'; created="$value" ;;
+      *) die "Clave de metadata desconocida: $key" ;;
+    esac
+    count=$((count + 1))
+  done < "$metadata"
+  [[ "$count" -eq 7 && "$format" == "$BASELINE_FORMAT_VERSION" ]] || die 'Versión o campos de metadata no válidos.'
+  [[ "$installation_id" == "$ACTIVE_CYCLE" && "$metadata_home" == "$HOME" ]] ||
+    die 'La baseline no pertenece al HOME o ciclo actual.'
+  validate_profile "$profile"
+  [[ "$repo" == /* && -n "$commit" && -n "$created" ]] || die 'Metadata de baseline incompleta.'
+  [[ -f "$ACTIVE_CYCLE_DIR/status" && ! -L "$ACTIVE_CYCLE_DIR/status" ]] || die 'Estado de baseline ausente.'
+  BASELINE_STATUS="$(< "$ACTIVE_CYCLE_DIR/status")"
+  case "$BASELINE_STATUS" in active|restored) ;; *) die 'Estado de baseline corrupto.' ;; esac
+}
+
+manifest_has_path() {
+  local relative="$1"
+  awk -F '\t' -v wanted="$relative" 'NR > 1 && $1 == wanted { found=1 } END { exit !found }' "$MANIFEST_FILE"
+}
+
+manifest_field() {
+  local relative="$1" field="$2"
+  awk -F '\t' -v wanted="$relative" -v column="$field" 'NR > 1 && $1 == wanted { print $column; exit }' "$MANIFEST_FILE"
+}
+
+validate_backup_type() {
+  local backup="$1" expected="$2"
+  case "$expected" in
+    file) [[ -f "$backup" && ! -L "$backup" ]] ;;
+    directory) [[ -d "$backup" && ! -L "$backup" ]] ;;
+    symlink) [[ -L "$backup" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_backup_containment() {
+  local relative="$1" remaining component current="$ACTIVE_CYCLE_DIR/files"
+  [[ -d "$current" && ! -L "$current" ]] || die 'El directorio files de la baseline es inseguro.'
+  remaining="$relative"
+  while [[ "$remaining" == */* ]]; do
+    component="${remaining%%/*}"
+    remaining="${remaining#*/}"
+    current="$current/$component"
+    if [[ -e "$current" || -L "$current" ]]; then
+      [[ -d "$current" && ! -L "$current" ]] || die "Un padre del backup es inseguro: $relative"
+    fi
+  done
+}
+
+validate_manifest() {
+  local header relative original_type backup mode kind source backup_fingerprint extra backup_path package
+  [[ -f "$MANIFEST_FILE" && ! -L "$MANIFEST_FILE" ]] || die 'Manifest de baseline ausente o inseguro.'
+  IFS= read -r header < "$MANIFEST_FILE" || die 'Manifest vacío.'
+  [[ "$header" == $'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint' ]] || die 'Cabecera de manifest no válida.'
+  exec 3< "$MANIFEST_FILE"
+  IFS= read -r header <&3
+  while IFS=$'\t' read -r relative original_type backup mode kind source backup_fingerprint extra <&3; do
+    [[ -n "$relative" && -n "$original_type" && -n "$backup" && -n "$mode" &&
+       -n "$kind" && -n "$source" && -n "$backup_fingerprint" && -z "$extra" ]] || die 'Entrada de manifest corrupta.'
+    validate_target_containment "$relative"
+    case "$original_type" in missing|file|directory|symlink) ;; *) die 'Tipo original no válido en manifest.' ;; esac
+    case "$kind" in stow|profile|git|vscode|vscode_backup) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
+    if [[ "$kind" == stow ]]; then
+      validate_relative_path "$source" || die 'Source Stow no válido en manifest.'
+      package="${source%%/*}"
+      case "$package" in zsh|git|btop|ssh|vscode) ;; *) die 'Paquete Stow no válido en manifest.' ;; esac
+      [[ "$source" == "$package/$relative" ]] ||
+        die 'La ruta Stow del manifest no coincide con el repositorio.'
+    else
+      [[ "$source" == '-' ]] || die 'Source inesperado en manifest.'
+      case "$kind" in
+        profile) [[ "$relative" == '.config/dotfiles/profile' ]] || die 'Ruta de perfil no válida.' ;;
+        git) [[ "$relative" == '.config/git/local.gitconfig' ]] || die 'Ruta de identidad Git no válida.' ;;
+        vscode) [[ "$relative" == 'Code/User/settings.json' || "$relative" == */Code/User/settings.json ]] || die 'Ruta de VS Code no válida.' ;;
+        vscode_backup) [[ "$relative" == 'Code/User/settings.json.pre-dotfiles' || "$relative" == */Code/User/settings.json.pre-dotfiles ]] || die 'Ruta de backup de VS Code no válida.' ;;
+      esac
+    fi
+    if [[ "$original_type" == missing ]]; then
+      [[ "$backup" == '-' && "$mode" == '-' && "$backup_fingerprint" == '-' ]] || die 'Entrada missing inconsistente.'
+    else
+      [[ "$backup" == "files/$relative" && "$mode" =~ ^[0-7]{3,4}$ ]] || die 'Referencia de backup no válida.'
+      backup_path="$ACTIVE_CYCLE_DIR/$backup"
+      validate_backup_containment "$relative"
+      validate_backup_type "$backup_path" "$original_type" || die "Backup ausente o de tipo incorrecto: $relative"
+      [[ "$(path_fingerprint "$backup_path")" == "$backup_fingerprint" ]] || die "La integridad del backup no coincide: $relative"
+    fi
+  done
+  exec 3<&-
+  if awk -F '\t' 'NR > 1 { if (seen[$1]++) exit 1 }' "$MANIFEST_FILE"; then :; else die 'Manifest con rutas duplicadas.'; fi
+}
+
+validate_ownership() {
+  local header relative kind proof source extra manifest_kind manifest_source
+  [[ -f "$OWNERSHIP_FILE" && ! -L "$OWNERSHIP_FILE" ]] || die 'Registro de propiedad ausente o inseguro.'
+  IFS= read -r header < "$OWNERSHIP_FILE" || die 'Registro de propiedad vacío.'
+  [[ "$header" == $'relative_path\tkind\tproof\tsource' ]] || die 'Cabecera de propiedad no válida.'
+  exec 3< "$OWNERSHIP_FILE"
+  IFS= read -r header <&3
+  while IFS=$'\t' read -r relative kind proof source extra <&3; do
+    [[ -n "$relative" && -n "$kind" && -n "$proof" && -n "$source" && -z "$extra" ]] ||
+      die 'Entrada de propiedad corrupta.'
+    validate_target_containment "$relative"
+    manifest_has_path "$relative" || die 'Propiedad sin entrada correspondiente en manifest.'
+    manifest_kind="$(manifest_field "$relative" 5)"
+    manifest_source="$(manifest_field "$relative" 6)"
+    [[ "$kind" == "$manifest_kind" && "$source" == "$manifest_source" ]] ||
+      die 'La propiedad no coincide con su entrada de manifest.'
+    case "$kind" in
+      stow)
+        [[ "$proof" == pending || "$proof" =~ ^symlink:[0-9a-f]{64}:[0-9]+$ ]] || die 'Prueba Stow no válida.'
+        validate_relative_path "$source" || die 'Source Stow no válido.'
+        ;;
+      profile|git|vscode|vscode_backup)
+        [[ "$source" == '-' && "$proof" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$|^symlink:[0-9a-f]{64}:[0-9]+$|^directory:[0-9a-f]{64}:[0-7]{3,4}$ ]] ||
+          die 'Prueba de propiedad no válida.'
+        ;;
+      *) die 'Tipo de propiedad no válido.' ;;
+    esac
+  done
+  exec 3<&-
+  if awk -F '\t' 'NR > 1 { if (seen[$1]++) exit 1 }' "$OWNERSHIP_FILE"; then :; else die 'Propiedad con rutas duplicadas.'; fi
+}
+
+validate_active_cycle() {
+  load_active_pointer
+  [[ -n "$ACTIVE_CYCLE" ]] || return 1
+  [[ -d "$ACTIVE_CYCLE_DIR" && ! -L "$ACTIVE_CYCLE_DIR" ]] || die 'Directorio de baseline ausente o inseguro.'
+  validate_metadata
+  validate_manifest
+  validate_ownership
+}
+
+create_cycle() {
+  local profile="$1" timestamp suffix commit temporary_active old_umask
+  timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+  suffix="$(printf '%s' "$$-$RANDOM-$timestamp" | cksum | awk '{ print $1 }')"
+  ACTIVE_CYCLE="$timestamp-$suffix"
+  ACTIVE_CYCLE_DIR="$STATE_ROOT/cycles/$ACTIVE_CYCLE"
+  while [[ -e "$ACTIVE_CYCLE_DIR" || -L "$ACTIVE_CYCLE_DIR" ]]; do
+    suffix="$(printf '%s' "$$-$RANDOM-$timestamp-$suffix" | cksum | awk '{ print $1 }')"
+    ACTIVE_CYCLE="$timestamp-$suffix"
+    ACTIVE_CYCLE_DIR="$STATE_ROOT/cycles/$ACTIVE_CYCLE"
+  done
+  MANIFEST_FILE="$ACTIVE_CYCLE_DIR/manifest.tsv"
+  OWNERSHIP_FILE="$ACTIVE_CYCLE_DIR/ownership.tsv"
+  commit="$(git -C "$DOTFILES_ROOT" rev-parse --verify HEAD 2>/dev/null || printf 'unknown')"
+  old_umask="$(umask)"
+  umask 077
+  mkdir -p "$STATE_ROOT/cycles" "$ACTIVE_CYCLE_DIR/files"
+  chmod 700 "$STATE_ROOT" "$STATE_ROOT/cycles" "$ACTIVE_CYCLE_DIR" "$ACTIVE_CYCLE_DIR/files"
+  {
+    printf 'format_version\t%s\n' "$BASELINE_FORMAT_VERSION"
+    printf 'installation_id\t%s\n' "$ACTIVE_CYCLE"
+    printf 'home\t%s\n' "$HOME"
+    printf 'profile\t%s\n' "$profile"
+    printf 'repo\t%s\n' "$DOTFILES_ROOT"
+    printf 'commit\t%s\n' "$commit"
+    printf 'created_at\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  } > "$ACTIVE_CYCLE_DIR/metadata.tsv"
+  printf 'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint\n' > "$MANIFEST_FILE"
+  printf 'relative_path\tkind\tproof\tsource\n' > "$OWNERSHIP_FILE"
+  printf 'active\n' > "$ACTIVE_CYCLE_DIR/status"
+  temporary_active="$STATE_ROOT/.active.$$"
+  printf '%s\n' "$ACTIVE_CYCLE" > "$temporary_active"
+  mv -f "$temporary_active" "$STATE_ROOT/active"
+  umask "$old_umask"
+  BASELINE_STATUS='active'
+  BASELINE_MODE='active'
+  success "Baseline creada: $ACTIVE_CYCLE"
+}
+
+copy_path_to_backup() {
+  local target="$1" backup="$2"
+  mkdir -p "${backup%/*}"
+  cp -pPR "$target" "$backup"
+}
+
+record_baseline_path() {
+  local relative="$1" kind="$2" source="$3" move_original="${4:-0}"
+  local target="$HOME/$relative" original_type backup='-' mode='-' backup_path backup_fingerprint='-'
+  manifest_has_path "$relative" && return 0
+  validate_target_containment "$relative"
+  original_type="$(path_type "$target")"
+  [[ "$original_type" != unsupported ]] || die "Tipo de archivo no soportado: ~/$relative"
+  if [[ "$original_type" != missing ]]; then
+    backup="files/$relative"
+    backup_path="$ACTIVE_CYCLE_DIR/$backup"
+    mode="$(path_mode "$target")"
+    mkdir -p "${backup_path%/*}"
+    if [[ "$move_original" -eq 1 ]]; then
+      mv "$target" "$backup_path"
+      backup_fingerprint="$(path_fingerprint "$backup_path")"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$relative" "$original_type" "$backup" "$mode" "$kind" "$source" "$backup_fingerprint" >> "$MANIFEST_FILE"
+      printf '%s\tstow\tpending\t%s\n' "$relative" "$source" >> "$OWNERSHIP_FILE"
+      info "Conflicto respaldado: ~/$relative"
+      return 0
+    fi
+    copy_path_to_backup "$target" "$backup_path"
+    backup_fingerprint="$(path_fingerprint "$backup_path")"
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$relative" "$original_type" "$backup" "$mode" "$kind" "$source" "$backup_fingerprint" >> "$MANIFEST_FILE"
+}
+
+ownership_set() {
+  local relative="$1" kind="$2" proof="$3" source="$4" temporary
+  [[ "$BASELINE_MODE" == active ]] || return 0
+  temporary="$ACTIVE_CYCLE_DIR/.ownership.$$"
+  awk -F '\t' -v wanted="$relative" 'NR == 1 || $1 != wanted' "$OWNERSHIP_FILE" > "$temporary"
+  printf '%s\t%s\t%s\t%s\n' "$relative" "$kind" "$proof" "$source" >> "$temporary"
+  mv -f "$temporary" "$OWNERSHIP_FILE"
+}
+
+mark_path_if_changed() {
+  local relative="$1" kind="$2" source="$3" target
+  local original_type backup backup_path original_fingerprint current_fingerprint
+  target="$HOME/$relative"
+  [[ "$BASELINE_MODE" == active ]] || return 0
+  manifest_has_path "$relative" || die "No existe baseline para la ruta gestionada: ~/$relative"
+  [[ -e "$target" || -L "$target" ]] || return 0
+  original_type="$(manifest_field "$relative" 2)"
+  current_fingerprint="$(path_fingerprint "$target")"
+  if [[ "$original_type" != missing ]]; then
+    backup="$(manifest_field "$relative" 3)"
+    backup_path="$ACTIVE_CYCLE_DIR/$backup"
+    original_fingerprint="$(path_fingerprint "$backup_path")"
+    [[ "$current_fingerprint" != "$original_fingerprint" ]] || return 0
+  fi
+  ownership_set "$relative" "$kind" "$current_fingerprint" "$source"
+}
+
+mark_stow_package_owned() {
+  local package="$1" index target
+  [[ "$BASELINE_MODE" == active ]] || return 0
+  for (( index=0; index<${#STOW_ENTRY_RELS[@]}; index++ )); do
+    if [[ "${STOW_ENTRY_PACKAGES[index]}" == "$package" ]]; then
+      target="$HOME/${STOW_ENTRY_RELS[index]}"
+      [[ -L "$target" ]] || die "Stow no creó el enlace esperado: ~/${STOW_ENTRY_RELS[index]}"
+      ownership_set "${STOW_ENTRY_RELS[index]}" stow "$(path_fingerprint "$target")" \
+        "${STOW_ENTRY_SOURCES[index]}"
+    fi
+  done
+}
+
+vscode_managed_relatives() {
+  VSCODE_SETTINGS_REL=''
+  VSCODE_BACKUP_REL=''
+  case "$1:$DOTFILES_OS" in
+    server:*) return 0 ;;
+    *:macos) VSCODE_SETTINGS_REL='Library/Application Support/Code/User/settings.json' ;;
+    *:linux)
+      local settings_path="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/settings.json"
+      case "$settings_path" in "$HOME"/*) VSCODE_SETTINGS_REL="${settings_path#"$HOME/"}" ;; *) die 'Los settings de VS Code quedan fuera de HOME y no pueden incluirse en rollback.' ;; esac
+      ;;
+  esac
+  VSCODE_BACKUP_REL="$VSCODE_SETTINGS_REL.pre-dotfiles"
+  validate_target_containment "$VSCODE_SETTINGS_REL"
+  validate_target_containment "$VSCODE_BACKUP_REL"
+}
+
+mark_vscode_paths_if_changed() {
+  local profile="$1"
+  [[ "$BASELINE_MODE" == active ]] || return 0
+  vscode_managed_relatives "$profile"
+  [[ -n "$VSCODE_SETTINGS_REL" ]] || return 0
+  mark_path_if_changed "$VSCODE_SETTINGS_REL" vscode '-'
+  mark_path_if_changed "$VSCODE_BACKUP_REL" vscode_backup '-'
+}
+
+is_conflict_relative() {
+  local wanted="$1" conflict
+  for conflict in "${CONFLICT_RELS[@]}"; do [[ "$conflict" == "$wanted" ]] && return 0; done
+  return 1
+}
+
+plan_reversible_install() {
+  local profile="$1" index target source answer
+  validate_home_and_state
+  stow_packages_for_profile "$profile"
+  collect_stow_entries
+  CONFLICT_RELS=()
+  CONFLICT_SOURCES=()
+  for (( index=0; index<${#STOW_ENTRY_RELS[@]}; index++ )); do
+    target="$HOME/${STOW_ENTRY_RELS[index]}"
+    source="$DOTFILES_ROOT/${STOW_ENTRY_SOURCES[index]}"
+    if [[ -e "$target" || -L "$target" ]] && ! stow_link_is_managed "$target" "$source"; then
+      if [[ "${STOW_ENTRY_RELS[index]}" == '.ssh/config' && -d "$target" && ! -L "$target" ]]; then
+        die 'Se rechaza respaldar un directorio situado en ~/.ssh/config.'
+      fi
+      CONFLICT_RELS+=("${STOW_ENTRY_RELS[index]}")
+      CONFLICT_SOURCES+=("${STOW_ENTRY_SOURCES[index]}")
+    fi
+  done
+  load_active_pointer
+  if [[ -n "$ACTIVE_CYCLE" ]]; then
+    validate_active_cycle
+    [[ "$BASELINE_STATUS" == active ]] && BASELINE_MODE='active'
+  elif managed_dotfiles_exist; then
+    BASELINE_MODE='legacy'
+    info 'Esta instalación es anterior al sistema de rollback; no existe una baseline pre-dotfiles completa.'
+  fi
+  (( ${#CONFLICT_RELS[@]} > 0 )) || return 0
+  warn 'Se han encontrado configuraciones existentes:'
+  printf '  - ~/%s\n' "${CONFLICT_RELS[@]}" >&2
+  if [[ "$BASELINE_MODE" == legacy ]]; then
+    die 'No se respaldan conflictos sobre una instalación antigua sin baseline completa.'
+  fi
+  if [[ "$BASELINE_MODE" == active ]]; then
+    for relative in "${CONFLICT_RELS[@]}"; do
+      if manifest_has_path "$relative"; then
+        die "Una ruta gestionada fue modificada después de crear la baseline y no se moverá: ~/$relative"
+      fi
+    done
+  fi
+  if [[ "$BACKUP_CONFLICTS" -eq 1 ]]; then return 0; fi
+  if [[ "$ASSUME_YES" -eq 1 ]]; then
+    die 'El modo --yes no mueve conflictos. Revisa las rutas o usa explícitamente --backup-conflicts.'
+  fi
+  printf '\n¿Qué quieres hacer?\n  1) Cancelar [recomendado]\n  2) Hacer copia de seguridad y continuar\n\n' >&2
+  if ! read -r -p '> ' answer || [[ "$answer" != 2 ]]; then die 'Instalación cancelada; no se ha movido ningún conflicto.'; fi
+  BACKUP_CONFLICTS=1
+}
+
+begin_reversible_install() {
+  local profile="$1" index relative source move_original
+  validate_home_and_state
+  if [[ "$BASELINE_MODE" == legacy ]]; then return 0; fi
+  if validate_active_cycle; then
+    if [[ "$BASELINE_STATUS" == restored ]]; then
+      create_cycle "$profile"
+    else
+      BASELINE_MODE='active'
+      info "Baseline existente reutilizada: $ACTIVE_CYCLE"
+    fi
+  else
+    create_cycle "$profile"
+  fi
+
+  for (( index=0; index<${#STOW_ENTRY_RELS[@]}; index++ )); do
+    relative="${STOW_ENTRY_RELS[index]}"
+    source="${STOW_ENTRY_SOURCES[index]}"
+    move_original=0
+    if is_conflict_relative "$relative"; then
+      [[ "$BACKUP_CONFLICTS" -eq 1 ]] || die 'Conflicto no autorizado antes de Stow.'
+      move_original=1
+    elif ! manifest_has_path "$relative" &&
+         stow_link_is_managed "$HOME/$relative" "$DOTFILES_ROOT/$source"; then
+      die "Existe un enlace gestionado sin baseline verificable: ~/$relative"
+    fi
+    record_baseline_path "$relative" stow "$source" "$move_original"
+  done
+  record_baseline_path '.config/dotfiles/profile' profile '-'
+  record_baseline_path '.config/git/local.gitconfig' git '-'
+  vscode_managed_relatives "$profile"
+  if [[ -n "$VSCODE_SETTINGS_REL" ]]; then
+    record_baseline_path "$VSCODE_SETTINGS_REL" vscode '-'
+    record_baseline_path "$VSCODE_BACKUP_REL" vscode_backup '-'
+  fi
+  validate_active_cycle
+}
+
+ownership_entries_exist() {
+  [[ -f "$OWNERSHIP_FILE" ]] && awk 'NR > 1 { found=1 } END { exit !found }' "$OWNERSHIP_FILE"
+}
+
+preflight_owned_path() {
+  local relative="$1" kind="$2" proof="$3" source="$4" target
+  target="$HOME/$relative"
+  if [[ ! -e "$target" && ! -L "$target" ]]; then return 0; fi
+  case "$kind" in
+    stow)
+      if [[ "$proof" == pending ]]; then
+        stow_link_is_managed "$target" "$DOTFILES_ROOT/$source"
+      else
+        [[ -L "$target" && "$(path_fingerprint "$target")" == "$proof" ]]
+      fi
+      ;;
+    *) [[ "$(path_fingerprint "$target")" == "$proof" ]] ;;
+  esac
+}
+
+print_restore_plan() {
+  local relative kind proof source original_type
+  printf '\nPlan de restauración:\n'
+  while IFS=$'\t' read -r relative kind proof source; do
+    validate_target_containment "$relative"
+    if [[ -e "$HOME/$relative" || -L "$HOME/$relative" ]]; then printf '  Retirar:  ~/%s\n' "$relative"; fi
+    original_type="$(manifest_field "$relative" 2)"
+    if [[ "$original_type" != missing ]]; then printf '  Restaurar: ~/%s (%s)\n' "$relative" "$original_type"; fi
+  done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
+}
+
+preflight_restore() {
+  local relative kind proof source conflicts=()
+  while IFS=$'\t' read -r relative kind proof source; do
+    if ! preflight_owned_path "$relative" "$kind" "$proof" "$source"; then conflicts+=("$relative"); fi
+  done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
+  if (( ${#conflicts[@]} > 0 )); then
+    warn 'La restauración se cancela porque estas rutas ya no son inequívocamente gestionadas:'
+    printf '  - ~/%s\n' "${conflicts[@]}" >&2
+    die 'Se conservan intactas las modificaciones posteriores del usuario.'
+  fi
+}
+
+owned_stow_packages() {
+  local relative kind proof source package existing current
+  RESTORE_STOW_PACKAGES=()
+  while IFS=$'\t' read -r relative kind proof source; do
+    [[ "$kind" == stow ]] || continue
+    package="${source%%/*}"
+    existing=0
+    for current in "${RESTORE_STOW_PACKAGES[@]}"; do [[ "$current" == "$package" ]] && existing=1; done
+    (( existing == 1 )) || RESTORE_STOW_PACKAGES+=("$package")
+  done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
+}
+
+remove_owned_configuration() {
+  local package relative kind proof source target
+  owned_stow_packages
+  for package in "${RESTORE_STOW_PACKAGES[@]}"; do
+    if ! stow -D --no-folding --dir="$DOTFILES_ROOT" --target="$HOME" "$package"; then
+      die "Stow no pudo retirar el paquete $package; la restauración puede haber quedado parcial."
+    fi
+  done
+  while IFS=$'\t' read -r relative kind proof source; do
+    target="$HOME/$relative"
+    if [[ "$kind" == stow ]]; then
+      if [[ -L "$target" && "$proof" != pending && "$(path_fingerprint "$target")" == "$proof" ]]; then
+        rm -- "$target"
+      elif [[ "$proof" == pending ]] && stow_link_is_managed "$target" "$DOTFILES_ROOT/$source"; then
+        rm -- "$target"
+      fi
+    elif [[ -e "$target" || -L "$target" ]]; then
+      [[ "$(path_fingerprint "$target")" == "$proof" ]] ||
+        die "La ruta cambió durante la restauración: ~/$relative"
+      rm -- "$target"
+    fi
+    if [[ -e "$target" || -L "$target" ]]; then
+      die "No se pudo retirar de forma segura: ~/$relative"
+    fi
+    printf '%s\tremoved\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$relative" >> "$ACTIVE_CYCLE_DIR/restore.log"
+  done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
+}
+
+restore_baseline_files() {
+  local relative kind proof source original_type backup target backup_path
+  while IFS=$'\t' read -r relative kind proof source; do
+    original_type="$(manifest_field "$relative" 2)"
+    [[ "$original_type" != missing ]] || continue
+    backup="$(manifest_field "$relative" 3)"
+    target="$HOME/$relative"
+    backup_path="$ACTIVE_CYCLE_DIR/$backup"
+    [[ ! -e "$target" && ! -L "$target" ]] || die "La ruta reapareció durante la restauración: ~/$relative"
+    mkdir -p "${target%/*}"
+    copy_path_to_backup "$backup_path" "$target" ||
+      die "No se pudo restaurar ~/$relative; la restauración ha quedado parcial."
+    printf '%s\trestored\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$relative" >> "$ACTIVE_CYCLE_DIR/restore.log"
+  done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
+}
+
+set_cycle_restored() {
+  local temporary="$ACTIVE_CYCLE_DIR/.status.$$"
+  printf 'restored\n' > "$temporary"
+  mv -f "$temporary" "$ACTIVE_CYCLE_DIR/status"
+  BASELINE_STATUS='restored'
+}
+
+confirm_restore() {
+  local answer
+  [[ "$ASSUME_YES" -eq 1 ]] && return 0
+  if ! read -r -p '¿Restaurar la configuración anterior? [s/N] ' answer; then die 'Restauración cancelada.'; fi
+  case "$answer" in s|S|si|SI|sí|SÍ) ;; *) die 'Restauración cancelada.' ;; esac
+}
+
+legacy_uninstall() {
+  local dry_run="$1" package index target source found=0 answer
+  stow_packages_for_all_profiles
+  collect_stow_entries
+  printf '\nInstalación antigua sin baseline completa. Solo se retirarán enlaces Stow verificables:\n'
+  for (( index=0; index<${#STOW_ENTRY_RELS[@]}; index++ )); do
+    target="$HOME/${STOW_ENTRY_RELS[index]}"
+    source="$DOTFILES_ROOT/${STOW_ENTRY_SOURCES[index]}"
+    if stow_link_is_managed "$target" "$source"; then printf '  Retirar: ~/%s\n' "${STOW_ENTRY_RELS[index]}"; found=1; fi
+  done
+  (( found == 1 )) || { info 'No hay una instalación gestionada que retirar.'; return 0; }
+  [[ "$dry_run" -eq 1 ]] && { info 'Dry-run: no se ha modificado ningún archivo.'; return 0; }
+  confirm_restore
+  for package in "${STOW_PACKAGES[@]}"; do
+    if ! stow -D --no-folding --dir="$DOTFILES_ROOT" --target="$HOME" "$package"; then
+      die "Stow falló al retirar $package; la desinstalación antigua puede haber quedado parcial."
+    fi
+  done
+  for (( index=0; index<${#STOW_ENTRY_RELS[@]}; index++ )); do
+    target="$HOME/${STOW_ENTRY_RELS[index]}"
+    source="$DOTFILES_ROOT/${STOW_ENTRY_SOURCES[index]}"
+    if stow_link_is_managed "$target" "$source"; then rm -- "$target"; fi
+  done
+  success 'Enlaces Stow retirados. No existía una baseline capaz de restaurar configuraciones anteriores.'
+  info "El repositorio se conserva en $DOTFILES_ROOT"
+}
+
+uninstall_dotfiles() {
+  local dry_run="$1"
+  validate_home_and_state
+  if ! validate_active_cycle; then
+    legacy_uninstall "$dry_run"
+    return
+  fi
+  if [[ "$BASELINE_STATUS" == restored ]]; then
+    info 'Este ciclo ya fue restaurado; no hay una instalación gestionada que retirar.'
+    return 0
+  fi
+  if ! ownership_entries_exist; then
+    info 'La baseline no contiene ninguna configuración aplicada que restaurar.'
+    if [[ "$dry_run" -eq 1 ]]; then
+      info 'Dry-run: no se ha modificado ningún archivo.'
+      return 0
+    fi
+    confirm_restore
+    set_cycle_restored
+    success 'El ciclo vacío se ha marcado como restaurado.'
+    return 0
+  fi
+  preflight_restore
+  print_restore_plan
+  if [[ "$dry_run" -eq 1 ]]; then info 'Dry-run: no se ha modificado ningún archivo.'; return 0; fi
+  confirm_restore
+  remove_owned_configuration
+  restore_baseline_files
+  set_cycle_restored
+  success 'La configuración se ha restaurado. Los paquetes y herramientas instalados se han conservado.'
+  info 'Los historiales Bash/Zsh, extensiones de VS Code y configuración SSH local se han conservado.'
+  info 'El shell de login y los permisos seguros de los directorios SSH no se revierten automáticamente.'
+  info "El repositorio se conserva en $DOTFILES_ROOT"
+}
+
+package_stow_status() {
+  local package="$1" source relative target found=0
+  while IFS= read -r -d '' source; do
+    found=1
+    relative="${source#"$DOTFILES_ROOT/$package/"}"
+    target="$HOME/$relative"
+    stow_link_is_managed "$target" "$source" || return 1
+  done < <(find "$DOTFILES_ROOT/$package" -type f -print0)
+  (( found == 1 ))
+}
+
+show_dotfiles_status() {
+  local profile='no configurado' baseline='no disponible' installed='no' package
+  validate_home_and_state
+  if [[ -f "$HOME/.config/dotfiles/profile" && ! -L "$HOME/.config/dotfiles/profile" ]]; then
+    IFS= read -r profile < "$HOME/.config/dotfiles/profile" || profile='no configurado'
+    case "$profile" in personal|work|server) ;; *) profile='desconocido' ;; esac
+  fi
+  if validate_active_cycle; then baseline="$BASELINE_STATUS ($ACTIVE_CYCLE)"; fi
+  if managed_dotfiles_exist; then installed='yes'; fi
+  printf '\nDotfiles status\n\n'
+  printf 'Repo:       %s\nProfile:    %s\nBaseline:   %s\nInstalled:  %s\n\n' "$DOTFILES_ROOT" "$profile" "$baseline" "$installed"
+  printf 'Stow:\n'
+  for package in zsh git btop ssh vscode; do
+    if package_stow_status "$package"; then success "$package"; else printf '  - %s\n' "$package"; fi
+  done
+  printf '\nLocal:\n'
+  if [[ -n "$(git config --get user.name 2>/dev/null || true)" && -n "$(git config --get user.email 2>/dev/null || true)" ]]; then success 'Identidad Git configurada'; else printf '  - Identidad Git incompleta\n'; fi
+  if [[ -d "$HOME/.ssh/config.d" ]]; then success 'SSH config.d presente'; else printf '  - SSH config.d ausente\n'; fi
+}

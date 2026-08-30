@@ -77,7 +77,43 @@ requisito para abrir Zsh.
 
 El despliegue usa `--restow --no-folding`: no convierte `~/.ssh` o `~/.config` completos
 en enlaces. Antes de invocar Stow, un preflight lista los archivos reales que entrarían en
-conflicto y aborta. No mueve, borra, adopta ni sobrescribe esos archivos.
+conflicto y cancela por defecto. Nunca usa `stow --adopt` ni sobrescribe esos archivos.
+
+## Baseline y restauración
+
+La primera instalación nueva crea una baseline por ciclo en
+`${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles/cycles/`. Su manifest versionado registra
+solo las rutas que el instalador puede gestionar, conserva archivos, directorios y symlinks
+previos, y mantiene huellas para detectar modificaciones posteriores. Una segunda instalación
+reutiliza la baseline activa; después de restaurarla, una instalación nueva crea otro ciclo.
+
+Los conflictos de Stow siguen cancelando de forma predeterminada. En modo interactivo se puede
+elegir «Hacer copia de seguridad y continuar»; en automatización requiere intención explícita:
+
+```bash
+./install.sh --profile personal --yes --backup-conflicts
+```
+
+Para inspeccionar o restaurar:
+
+```bash
+./install.sh --status
+./install.sh --uninstall --dry-run
+./install.sh --uninstall
+./install.sh --uninstall --yes
+```
+
+La restauración solo retira enlaces o archivos que todavía pueda demostrar como propios. Si una
+ruta fue sustituida o modificada después, aborta antes de sobrescribirla. Las instalaciones
+anteriores al sistema de baseline se reconocen como tales: solo pueden retirar enlaces Stow
+verificables y no prometen reconstruir un estado previo desconocido.
+
+No se eliminan paquetes, herramientas, el repositorio ni extensiones de VS Code. Tampoco se
+revierten `.bash_history`, `.zsh_history` o su backup de migración, y nunca se toca la
+configuración local `~/.ssh/config.d/*.conf`. Para VS Code, la baseline es la fuente de verdad
+del rollback; `settings.json.pre-dotfiles` se registra como ruta gestionada dentro del mismo
+ciclo cuando el instalador lo crea. Por seguridad, tampoco se revierte automáticamente
+el shell de login ni se relajan los permisos `0700` aplicados a los directorios SSH.
 
 Dry-run contra un HOME temporal:
 

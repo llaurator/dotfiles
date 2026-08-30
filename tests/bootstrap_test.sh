@@ -108,6 +108,14 @@ run_bootstrap "$case_a_home" "$case_a_home/current-output" --yes --profile serve
     fail 'el repositorio existente fue reemplazado'
 assert_contains "$case_a_home/current-output" 'ya está actualizado en main'
 
+# Las acciones nuevas también atraviesan el bootstrap sin que este necesite conocerlas.
+run_bootstrap "$case_a_home" "$case_a_home/status-output" --status
+printf '%s\n' '--status' > "$case_a_home/expected-status-args"
+assert_files_equal "$case_a_home/expected-status-args" "$case_a_home/installer-args"
+run_bootstrap "$case_a_home" "$case_a_home/uninstall-output" --uninstall --dry-run
+printf '%s\n' '--uninstall' '--dry-run' > "$case_a_home/expected-uninstall-args"
+assert_files_equal "$case_a_home/expected-uninstall-args" "$case_a_home/installer-args"
+
 # C: una actualización remota se aplica exclusivamente por fast-forward.
 printf 'update\n' > "$SEED_REPOSITORY/update.txt"
 git_test -C "$SEED_REPOSITORY" add update.txt
@@ -194,6 +202,8 @@ case_l_repo="$TEST_ROOT/unrelated/location/repository"
 mkdir -p "$case_l_home" "$case_l_repo/scripts"
 cp "$ROOT_DIR/install.sh" "$case_l_repo/install.sh"
 cp "$ROOT_DIR/scripts/lib.sh" "$case_l_repo/scripts/lib.sh"
+cp "$ROOT_DIR/scripts/common.sh" "$case_l_repo/scripts/common.sh"
+cp "$ROOT_DIR/scripts/state.sh" "$case_l_repo/scripts/state.sh"
 HOME="$case_l_home" bash "$case_l_repo/install.sh" --help > "$case_l_home/output"
 assert_contains "$case_l_home/output" 'Uso:'
 

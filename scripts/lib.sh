@@ -32,6 +32,20 @@ choose_profile(){
   read -r -p '> ' choice
   case "$choice" in 1|personal) echo personal ;; 2|work|trabajo) echo work ;; 3|server|servidor) echo server ;; *) die 'Perfil no válido' ;; esac
 }
+choose_action(){
+  local choice
+  printf '%s\n' '¿Qué quieres hacer?' >&2
+  printf '  1) Instalar / actualizar dotfiles\n  2) Restaurar / desinstalar dotfiles\n  3) Migrar historial Bash → Zsh\n  4) Estado\n  5) Salir\n\n' >&2
+  read -r -p '> ' choice
+  case "$choice" in
+    1|install|instalar) echo install ;;
+    2|uninstall|restore|restaurar) echo uninstall ;;
+    3|migrate|migrar) echo migrate ;;
+    4|status|estado) echo status ;;
+    5|exit|salir) echo exit ;;
+    *) die 'Acción no válida' ;;
+  esac
+}
 validate_profile(){ case "$1" in personal|work|server) ;; *) die "Perfil no válido: $1" ;; esac; }
 print_plan(){
   printf '%sSe instalará:%s\n' "$BOLD" "$RESET"

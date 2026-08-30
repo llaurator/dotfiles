@@ -9,33 +9,19 @@ install_common_components(){
   install_git_repo https://github.com/zsh-users/zsh-history-substring-search.git "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
 }
 write_profile(){ mkdir -p "$HOME/.config/dotfiles"; printf '%s\n' "$1" > "$HOME/.config/dotfiles/profile"; success 'Perfil guardado en ~/.config/dotfiles/profile'; }
-stow_preflight() {
-  local package source relative target
-  local conflicts=()
-  for package in "$@"; do
-    while IFS= read -r -d '' source; do
-      relative="${source#"$DOTFILES_ROOT/$package/"}"
-      target="$HOME/$relative"
-      if [[ -e "$target" && ! -L "$target" && ! -d "$target" ]]; then
-        conflicts+=("$target")
-      fi
-    done < <(find "$DOTFILES_ROOT/$package" -type f -print0)
-  done
-  if (( ${#conflicts[@]} )); then
-    warn 'Stow ha detectado archivos existentes que no se sobrescribirán:'
-    printf '  - %s\n' "${conflicts[@]}" >&2
-    die 'Migra o respalda esos archivos manualmente y vuelve a ejecutar el instalador. No uses stow --adopt a ciegas.'
-  fi
+stow_packages_for_profile() {
+  local profile="$1"
+  STOW_PACKAGES=(zsh git btop)
+  case "$profile" in personal|work) STOW_PACKAGES+=(ssh vscode) ;; esac
 }
 deploy_stow_packages(){
   local profile="$1" package
-  local packages=(zsh git btop)
-  case "$profile" in personal|work) packages+=(ssh vscode) ;; esac
+  stow_packages_for_profile "$profile"
   info 'Desplegando dotfiles con GNU Stow...'
-  stow_preflight "${packages[@]}"
-  for package in "${packages[@]}"; do
+  for package in "${STOW_PACKAGES[@]}"; do
     [[ -d "$DOTFILES_ROOT/$package" ]] || die "Paquete Stow inexistente: $package"
     stow --restow --no-folding --dir="$DOTFILES_ROOT" --target="$HOME" "$package"
+    mark_stow_package_owned "$package"
     success "Stow: $package"
   done
   if [[ "$profile" != server ]]; then
