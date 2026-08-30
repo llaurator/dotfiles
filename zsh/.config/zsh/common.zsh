@@ -1,17 +1,22 @@
-export ZSH="$HOME/.oh-my-zsh"
 export BAT_THEME="Dracula"
 export PATH="$HOME/.local/bin:$PATH"
 
-if [[ -d "$ZSH" ]]; then
-  if [[ -r "$ZSH/custom/themes/powerlevel10k/powerlevel10k.zsh-theme" ]]; then
-    ZSH_THEME="powerlevel10k/powerlevel10k"
-  else
-    ZSH_THEME=""
-  fi
-  # zsh-syntax-highlighting debe ser el último plugin externo.
-  plugins=(git colored-man-pages extract sudo zsh-autosuggestions zsh-history-substring-search zsh-syntax-highlighting)
+DOTFILES_ZSH_COMPONENTS_FILE="$HOME/.config/dotfiles/zsh-components.zsh"
+[[ -r "$DOTFILES_ZSH_COMPONENTS_FILE" ]] && source "$DOTFILES_ZSH_COMPONENTS_FILE"
+unset DOTFILES_ZSH_COMPONENTS_FILE
+[[ -n "${ZSH:-}" ]] || export ZSH="$HOME/.oh-my-zsh"
+
+if [[ -n "${ZSH:-}" && -r "$ZSH/oh-my-zsh.sh" ]]; then
+  ZSH_THEME=""
+  plugins=(git colored-man-pages extract sudo)
   source "$ZSH/oh-my-zsh.sh"
 fi
+
+[[ -r "${DOTFILES_P10K_THEME:-}" ]] && source "$DOTFILES_P10K_THEME"
+[[ -r "${DOTFILES_ZSH_AUTOSUGGESTIONS:-}" ]] && source "$DOTFILES_ZSH_AUTOSUGGESTIONS"
+[[ -r "${DOTFILES_ZSH_HISTORY_SUBSTRING:-}" ]] && source "$DOTFILES_ZSH_HISTORY_SUBSTRING"
+# zsh-syntax-highlighting debe ser el último plugin externo.
+[[ -r "${DOTFILES_ZSH_SYNTAX_HIGHLIGHTING:-}" ]] && source "$DOTFILES_ZSH_SYNTAX_HIGHLIGHTING"
 
 HISTFILE="$HOME/.zsh_history"
 HISTSIZE=100000

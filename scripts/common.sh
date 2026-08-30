@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 install_git_repo(){ local repo="$1" dest="$2"; if [[ -d "$dest/.git" ]]; then info "Ya existe: $dest"; return; fi; if [[ -e "$dest" ]]; then warn "Existe $dest pero no parece un repositorio Git; no se modifica."; return; fi; git clone --depth=1 "$repo" "$dest"; }
 install_common_components(){
-  info 'Instalando componentes Zsh desde upstream...'
-  install_git_repo https://github.com/ohmyzsh/ohmyzsh.git "$HOME/.oh-my-zsh"
-  install_git_repo https://github.com/romkatv/powerlevel10k.git "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
-  install_git_repo https://github.com/zsh-users/zsh-autosuggestions.git "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
-  install_git_repo https://github.com/zsh-users/zsh-syntax-highlighting.git "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
-  install_git_repo https://github.com/zsh-users/zsh-history-substring-search.git "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
+  install_resolved_zsh_components
 }
 profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
 upstream_component_status() { local name="$1" component="$2" state; IFS=$'\t' read -r state _ < <(resolve_zsh_component "$component"); case "$state" in managed) printf '  ✓ %s (gestionado)\n' "$name";; external) printf '  ✓ %s (externo)\n' "$name";; missing) printf '  + %s (pendiente)\n' "$name";; esac; }

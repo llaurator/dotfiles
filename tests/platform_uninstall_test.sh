@@ -25,6 +25,11 @@ prepare_home() {
     "$home/.oh-my-zsh/custom/plugins/zsh-history-substring-search"; do
     mkdir -p "$upstream/.git"
   done
+  touch "$home/.oh-my-zsh/oh-my-zsh.sh" \
+    "$home/.oh-my-zsh/custom/themes/powerlevel10k/powerlevel10k.zsh-theme" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-history-substring-search/zsh-history-substring-search.zsh"
 }
 
 prepare_repo() {

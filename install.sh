@@ -178,6 +178,7 @@ record_packages_after
 record_upstream_before
 install_common_components
 record_upstream_after
+write_resolved_zsh_component_config
 if profile_uses_nerd_font "$PROFILE"; then install_nerd_font; fi
 write_profile "$PROFILE"
 mark_path_if_changed '.config/dotfiles/profile' profile '-'

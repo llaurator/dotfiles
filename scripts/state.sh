@@ -255,7 +255,7 @@ validate_manifest() {
        -n "$kind" && -n "$source" && -n "$backup_fingerprint" && -z "$extra" ]] || die 'Entrada de manifest corrupta.'
     validate_target_containment "$relative"
     case "$original_type" in missing|file|directory|symlink) ;; *) die 'Tipo original no válido en manifest.' ;; esac
-    case "$kind" in stow|profile|git|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
+    case "$kind" in stow|profile|git|zsh_components|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
     if [[ "$kind" == stow ]]; then
       validate_relative_path "$source" || die 'Source Stow no válido en manifest.'
       package="${source%%/*}"
@@ -266,6 +266,7 @@ validate_manifest() {
       [[ "$source" == '-' ]] || die 'Source inesperado en manifest.'
       case "$kind" in
         profile) [[ "$relative" == '.config/dotfiles/profile' ]] || die 'Ruta de perfil no válida.' ;;
+        zsh_components) [[ "$relative" == '.config/dotfiles/zsh-components.zsh' ]] || die 'Ruta de componentes Zsh no válida.' ;;
         git) [[ "$relative" == '.config/git/local.gitconfig' ]] || die 'Ruta de identidad Git no válida.' ;;
         vscode) [[ "$relative" == 'Code/User/settings.json' || "$relative" == */Code/User/settings.json ]] || die 'Ruta de VS Code no válida.' ;;
         vscode_backup) [[ "$relative" == 'Code/User/settings.json.pre-dotfiles' || "$relative" == */Code/User/settings.json.pre-dotfiles ]] || die 'Ruta de backup de VS Code no válida.' ;;
@@ -310,7 +311,7 @@ validate_ownership() {
         [[ "$proof" == pending || "$proof" =~ ^symlink:[0-9a-f]{64}:[0-9]+$ ]] || die 'Prueba Stow no válida.'
         validate_relative_path "$source" || die 'Source Stow no válido.'
         ;;
-      profile|git|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config)
+      profile|git|zsh_components|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config)
         [[ "$source" == '-' && "$proof" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$|^symlink:[0-9a-f]{64}:[0-9]+$|^directory:[0-9a-f]{64}:[0-7]{3,4}$ ]] ||
           die 'Prueba de propiedad no válida.'
         ;;
@@ -652,6 +653,7 @@ begin_reversible_install() {
     record_baseline_path "$relative" stow "$source" "$move_original"
   done
   record_baseline_path '.config/dotfiles/profile' profile '-'
+  record_baseline_path '.config/dotfiles/zsh-components.zsh' zsh_components '-'
   record_baseline_path '.config/git/local.gitconfig' git '-'
   vscode_managed_relatives "$profile"
   if [[ -n "$VSCODE_SETTINGS_REL" ]]; then
@@ -1204,17 +1206,25 @@ upstream_specs() {
     'zsh-history-substring-search' '.oh-my-zsh/custom/plugins/zsh-history-substring-search' 'https://github.com/zsh-users/zsh-history-substring-search.git'
 }
 record_upstream_before() {
-  local name rel origin existed
+  local name rel origin existed component state path
   [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
   awk 'NR>1 {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/upstream.tsv" && return 0
-  while IFS=$'\t' read -r name rel origin; do existed=no; [[ -e "$HOME/$rel" || -L "$HOME/$rel" ]] && existed=yes; printf '%s\t%s\t%s\t%s\t-\n' "$name" "$rel" "$existed" "$origin"; done < <(upstream_specs) >> "$ACTIVE_CYCLE_DIR/upstream.tsv"
+  while IFS=$'\t' read -r name rel origin; do
+    component="$(zsh_component_for_relative_path "$rel")" || die "Componente upstream desconocido: $rel"
+    IFS=$'\t' read -r state path < <(resolve_zsh_component "$component")
+    existed=no; [[ "$state" == external ]] && existed=yes
+    printf '%s\t%s\t%s\t%s\t-\n' "$name" "$rel" "$existed" "$origin"
+  done < <(upstream_specs) >> "$ACTIVE_CYCLE_DIR/upstream.tsv"
 }
 record_upstream_after() {
-  local file="$ACTIVE_CYCLE_DIR/upstream.tsv" tmp="$ACTIVE_CYCLE_DIR/.upstream.$$" name rel existed origin commit
+  local file="$ACTIVE_CYCLE_DIR/upstream.tsv" tmp="$ACTIVE_CYCLE_DIR/.upstream.$$" name rel existed origin commit component
   [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
   printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\n' > "$tmp"
   while IFS=$'\t' read -r name rel existed origin commit; do
-    commit=-; [[ "$existed" == no && -d "$HOME/$rel/.git" ]] && commit="$(git -C "$HOME/$rel" rev-parse HEAD 2>/dev/null || printf '-')"
+    component="$(zsh_component_for_relative_path "$rel")" || die "Componente upstream desconocido: $rel"
+    if [[ "$commit" == - && "$existed" == no ]] && zsh_component_created "$component"; then
+      commit="$(git -C "$HOME/$rel" rev-parse HEAD 2>/dev/null || printf '-')"
+    fi
     printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$rel" "$existed" "$origin" "$commit" >> "$tmp"
   done < <(sed -n '2,$p' "$file"); mv -f "$tmp" "$file"
 }

@@ -48,6 +48,11 @@ prepare_home() {
     "$home/.oh-my-zsh/custom/plugins/zsh-history-substring-search"; do
     mkdir -p "$repo/.git"
   done
+  touch "$home/.oh-my-zsh/oh-my-zsh.sh" \
+    "$home/.oh-my-zsh/custom/themes/powerlevel10k/powerlevel10k.zsh-theme" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-history-substring-search/zsh-history-substring-search.zsh"
 }
 
 run_install() {
@@ -152,6 +157,8 @@ assert_contains "$cycle_a/manifest.tsv" $'.zshrc\tmissing\t-\t-\tstow\tzsh/.zshr
 assert_contains "$cycle_a/manifest.tsv" $'.gitconfig\tmissing\t-\t-\tstow\tgit/.gitconfig'
 assert_contains "$cycle_a/metadata.tsv" $'format_version\t2'
 assert_contains "$cycle_a/metadata.tsv" $'profile\tserver'
+[[ -f "$home_a/.config/dotfiles/zsh-components.zsh" ]] || fail 'no se generó la configuración local de rutas Zsh'
+assert_contains "$cycle_a/ownership.tsv" $'.config/dotfiles/zsh-components.zsh\tzsh_components'
 
 # D: una segunda instalación reutiliza el mismo ciclo y no modifica el manifest.
 manifest_before="$(cksum "$cycle_a/manifest.tsv")"
@@ -174,6 +181,7 @@ assert_contains "$home_a/dry-run.out" 'Dry-run: no se ha modificado ningún arch
 run_install "$home_a" "$home_a/uninstall.out" --uninstall --yes
 [[ ! -e "$home_a/.zshrc" && ! -L "$home_a/.zshrc" ]] || fail 'no se retiró un enlace originalmente missing'
 [[ ! -e "$home_a/.gitconfig" && ! -L "$home_a/.gitconfig" ]] || fail 'no se retiró .gitconfig'
+[[ ! -e "$home_a/.config/dotfiles/zsh-components.zsh" ]] || fail 'no se retiró la configuración Zsh creada por el ciclo'
 [[ -d "$home_a/.oh-my-zsh" ]] || fail 'se eliminó una herramienta que debía conservarse'
 assert_file_content "$cycle_a/status" 'restored'
 assert_contains "$home_a/uninstall.out" 'La configuración y el entorno atribuible a este ciclo se han restaurado.'
