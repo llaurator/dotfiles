@@ -27,20 +27,46 @@ BASELINE_FORMAT=2
 DOTFILES_OS=linux
 
 # shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' 'for ((i=1;i<=$#;i++)); do [[ "${!i}" == -o ]] && { j=$((i+1)); : > "${!j}"; exit; }; done' > "$FAKE_BIN/curl"
-# shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' '[[ "$1" == -tq ]] && exit 0' '[[ "$1" == -jp ]] && { printf "font:%s\n" "$3"; exit; }' 'exit 1' > "$FAKE_BIN/unzip"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'output= url=' \
+  'while (( $# )); do case "$1" in -o) output=$2; shift 2;; *) url=$1; shift;; esac; done' \
+  'if [[ -n "${FONT_CORRUPT_STYLE:-}" && "$url" == *"$FONT_CORRUPT_STYLE.ttf" ]]; then printf "corrupt\n" > "$output"; else printf "font:%s\n" "$url" > "$output"; fi' \
+  'printf "%s\n" "$url" >> "$HOME/curl.log"' > "$FAKE_BIN/curl"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >> "$HOME/fc-cache.log"' > "$FAKE_BIN/fc-cache"
-chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/unzip" "$FAKE_BIN/fc-cache"
+chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/fc-cache"
+
+# Las descargas ficticias conservan el nombre de la variante en su contenido;
+# este doble permite probar los hashes fijados sin incluir binarios TTF en el repo.
+sha256_stream() {
+  local content
+  content="$(command cat)"
+  case "$content" in
+    *MesloLGSNerdFont-Regular.ttf) printf 'f3148b1e05c1dcf86785020d1d144524b9458deaab17505b88ecfe1694543214' ;;
+    *MesloLGSNerdFont-Bold.ttf) printf '63ff060fbe6db68ee719137640217f28da72fb1b78c1c41f254451f3fca1f236' ;;
+    *MesloLGSNerdFont-Italic.ttf) printf '998207ee63e0d2cd1490616f08a1bbfe217bd4ecf94060119048ab1e932d45bf' ;;
+    *MesloLGSNerdFont-BoldItalic.ttf) printf 'cb2a9fcbc8cbd587378035a46c0dac2c9490946b67b4ab91b3230559b5cc74e9' ;;
+    *) printf 'invalid' ;;
+  esac
+}
+
+FONT_CORRUPT_STYLE=Italic install_nerd_font > "$TEST_ROOT/corrupt.out"
+for style in Regular Bold Italic BoldItalic; do
+  [[ ! -e "$HOME/.local/share/fonts/MesloLGSNerdFont-$style.ttf" ]] || fail 'una descarga corrupta permitió una instalación parcial'
+done
+: > "$HOME/curl.log"
 
 install_nerd_font > "$TEST_ROOT/install.out"
 for style in Regular Bold Italic BoldItalic; do [[ -s "$HOME/.local/share/fonts/MesloLGSNerdFont-$style.ttf" ]] || fail "falta $style"; done
 [[ "$(wc -l < "$ACTIVE_CYCLE_DIR/fonts.tsv" | tr -d ' ')" == 5 ]] || fail 'tracking de fuentes incompleto'
+[[ "$(wc -l < "$HOME/curl.log" | tr -d ' ')" == 4 ]] || fail 'no se descargaron exactamente cuatro TTF'
+grep -Fq '/v3.5.1/patched-fonts/Meslo/S/MesloLGSNerdFont-Regular.ttf' "$HOME/curl.log" || fail 'la descarga no usa el tag oficial versionado'
+if grep -Fq 'Meslo.zip' "$HOME/curl.log"; then fail 'todavía se descarga el archivo completo de Meslo'; fi
 
 before="$(cksum "$ACTIVE_CYCLE_DIR/fonts.tsv")"
 install_nerd_font > "$TEST_ROOT/reinstall.out"
 [[ "$(cksum "$ACTIVE_CYCLE_DIR/fonts.tsv")" == "$before" ]] || fail 'segunda instalación duplicó tracking'
+[[ "$(wc -l < "$HOME/curl.log" | tr -d ' ')" == 4 ]] || fail 'segunda instalación repitió descargas'
 
 printf 'cambio del usuario\n' > "$HOME/.local/share/fonts/MesloLGSNerdFont-Italic.ttf"
 remove_cycle_fonts

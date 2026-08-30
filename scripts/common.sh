@@ -10,7 +10,9 @@ install_common_components(){
 }
 profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
 install_nerd_font() {
-  local font_dir archive tmp_dir name target before fingerprint
+  local font_dir tmp_dir name target before fingerprint expected url downloaded
+  local base_url='https://raw.githubusercontent.com/ryanoasis/nerd-fonts/v3.5.1/patched-fonts/Meslo/S'
+  local -a missing_fonts=()
   [[ "${DOTFILES_SKIP_FONT:-0}" != 1 ]] || { info 'Fuente omitida por el entorno de pruebas.'; return 0; }
   if [[ "$DOTFILES_OS" == macos ]]; then
     if brew list --cask font-meslo-lg-nerd-font >/dev/null 2>&1; then
@@ -21,21 +23,42 @@ install_nerd_font() {
     [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf 'homebrew-cask:font-meslo-lg-nerd-font\tmissing\tinstalled_by_cycle\n' >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
   else
     command_exists curl || { warn 'No se encontró curl; no se pudo instalar MesloLGS Nerd Font.'; return; }
-    command_exists unzip || { warn 'No se encontró unzip; no se pudo instalar MesloLGS Nerd Font.'; return; }
     font_dir="$HOME/.local/share/fonts"; mkdir -p "$font_dir"
-    tmp_dir="$(mktemp -d)" || return 1; archive="$tmp_dir/Meslo.zip"
-    if ! curl -fL --proto '=https' --tlsv1.2 -o "$archive" 'https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/Meslo.zip' || ! unzip -tq "$archive" >/dev/null; then rm -rf -- "$tmp_dir"; warn 'No se pudo descargar o validar MesloLGS Nerd Font.'; return 0; fi
+    tmp_dir="$(mktemp -d "$font_dir/.meslo-dotfiles.XXXXXX")" || return 1
     for name in Regular Bold Italic BoldItalic; do
       target="$font_dir/MesloLGSNerdFont-$name.ttf"; before=missing; [[ -e "$target" ]] && before="$(path_fingerprint "$target")"
       if [[ "$before" == missing ]]; then
-        unzip -jp "$archive" "MesloLGSNerdFont-$name.ttf" > "$tmp_dir/$name.ttf"
-        [[ -s "$tmp_dir/$name.ttf" ]] || { rm -rf -- "$tmp_dir"; warn 'El archivo de fuente esperado no estaba en el release.'; return 0; }
-        chmod 644 "$tmp_dir/$name.ttf"; mv "$tmp_dir/$name.ttf" "$target"
-        fingerprint="$(path_fingerprint "$target")"
-        [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf '%s\tmissing\t%s\n' ".local/share/fonts/${target##*/}" "$fingerprint" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+        missing_fonts+=("$name")
       elif [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -Fq ".local/share/fonts/${target##*/}" "$ACTIVE_CYCLE_DIR/fonts.tsv"; then
         printf '%s\t%s\t%s\n' ".local/share/fonts/${target##*/}" "$before" "$before" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
       fi
+    done
+    for name in "${missing_fonts[@]}"; do
+      case "$name" in
+        Regular) expected='f3148b1e05c1dcf86785020d1d144524b9458deaab17505b88ecfe1694543214' ;;
+        Bold) expected='63ff060fbe6db68ee719137640217f28da72fb1b78c1c41f254451f3fca1f236' ;;
+        Italic) expected='998207ee63e0d2cd1490616f08a1bbfe217bd4ecf94060119048ab1e932d45bf' ;;
+        BoldItalic) expected='cb2a9fcbc8cbd587378035a46c0dac2c9490946b67b4ab91b3230559b5cc74e9' ;;
+      esac
+      downloaded="$tmp_dir/MesloLGSNerdFont-$name.ttf"
+      url="$base_url/MesloLGSNerdFont-$name.ttf"
+      if ! curl -fL --proto '=https' --tlsv1.2 -o "$downloaded" "$url" ||
+         [[ ! -s "$downloaded" ]] || [[ "$(sha256_stream < "$downloaded")" != "$expected" ]]; then
+        rm -rf -- "$tmp_dir"
+        warn 'No se pudo descargar o verificar MesloLGS Nerd Font.'
+        return 0
+      fi
+      chmod 644 "$downloaded"
+    done
+    for name in "${missing_fonts[@]}"; do
+      target="$font_dir/MesloLGSNerdFont-$name.ttf"
+      [[ ! -e "$target" && ! -L "$target" ]] || { rm -rf -- "$tmp_dir"; warn "La fuente apareció durante la instalación y se conserva: $target"; return 0; }
+    done
+    for name in "${missing_fonts[@]}"; do
+      target="$font_dir/MesloLGSNerdFont-$name.ttf"
+      mv "$tmp_dir/MesloLGSNerdFont-$name.ttf" "$target"
+      fingerprint="$(path_fingerprint "$target")"
+      [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf '%s\tmissing\t%s\n' ".local/share/fonts/${target##*/}" "$fingerprint" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
     done
     rm -rf -- "$tmp_dir"
     if command_exists fc-cache; then fc-cache -f "$font_dir" >/dev/null 2>&1 || warn 'fontconfig no pudo actualizar la caché de usuario.'; else warn 'fontconfig no está disponible; actualiza la caché de fuentes manualmente.'; fi

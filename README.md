@@ -54,9 +54,11 @@ gestor de paquetes, `chsh` o macOS aún pueden pedir autorización. El perfil se
 incluyen la capa opcional `development.zsh`; `server` evita SSH cliente del repositorio,
 VS Code y configuración de escritorio.
 
-Los perfiles `personal` y `work` instalan también MesloLGS Nerd Font (cuatro variantes)
-desde una release versionada de Nerd Fonts en Linux o mediante el cask mantenido
-`font-meslo-lg-nerd-font` en macOS. No se cambia la fuente configurada del terminal.
+Los perfiles `personal` y `work` instalan también MesloLGS Nerd Font (cuatro variantes).
+En Linux descargan únicamente esos cuatro TTF desde el tag oficial `v3.5.1` de Nerd Fonts
+y verifican sus SHA-256 fijados antes de moverlos atómicamente al directorio de fuentes;
+en macOS usan el cask mantenido `font-meslo-lg-nerd-font`. No se cambia la fuente
+configurada del terminal.
 
 El sistema se detecta con `uname` y el gestor disponible. Git, Stow y Zsh son esenciales.
 fzf, fd, zoxide, eza, bat, ripgrep, btop, grc, git-delta y direnv se obtienen del gestor
