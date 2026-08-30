@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 install_system_packages() {
   local package
-  local optional_packages=(fzf fd-find zoxide bat ripgrep btop grc direnv eza)
   local available_packages=()
+  get_system_packages
   sudo apt-get update
-  sudo apt-get install -y git stow zsh jq
-  for package in "${optional_packages[@]}"; do
+  sudo apt-get install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
+  for package in "${SYSTEM_OPTIONAL_PACKAGES[@]}"; do
     if apt-cache show --no-all-versions "$package" >/dev/null 2>&1; then
       available_packages+=("$package")
     else
@@ -27,3 +27,5 @@ install_system_packages() {
     warn 'VS Code no está en los repositorios Debian/Ubuntu estándar; se configurará cuando el comando code exista.'
   fi
 }
+# shellcheck disable=SC2034 # Consumida por scripts/state.sh después de source.
+get_system_packages() { SYSTEM_REQUIRED_PACKAGES=(git stow zsh jq); SYSTEM_OPTIONAL_PACKAGES=(fzf fd-find zoxide bat ripgrep btop grc direnv eza); SYSTEM_PACKAGES=("${SYSTEM_REQUIRED_PACKAGES[@]}" "${SYSTEM_OPTIONAL_PACKAGES[@]}"); }

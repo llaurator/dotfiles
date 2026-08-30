@@ -189,4 +189,17 @@ configure_vscode() {
     fi
   done < "$HOME/.config/dotfiles/vscode/extensions.txt"
 }
-ensure_zsh_shell(){ local zsh_path; if [[ "$DOTFILES_OS" == macos && -x /bin/zsh ]]; then zsh_path=/bin/zsh; else zsh_path="$(command -v zsh || true)"; fi; [[ -n "$zsh_path" ]] || { warn 'No se ha encontrado zsh.'; return; }; if [[ "${SHELL:-}" == "$zsh_path" ]]; then success 'Zsh ya es el shell por defecto.'; return; fi; info 'Configurando Zsh como shell por defecto...'; if chsh -s "$zsh_path"; then success "Shell por defecto cambiado a $zsh_path"; else warn "Ejecuta manualmente: chsh -s $zsh_path"; fi; }
+ensure_zsh_shell(){
+  local zsh_path current
+  if [[ "$DOTFILES_OS" == macos && -x /bin/zsh ]]; then zsh_path=/bin/zsh; else zsh_path="$(command -v zsh || true)"; fi
+  [[ -n "$zsh_path" ]] || { warn 'No se ha encontrado zsh.'; return; }
+  current="$(current_login_shell)"
+  if [[ "$current" == "$zsh_path" ]]; then success 'Zsh ya es el shell por defecto.'; return; fi
+  info 'Configurando Zsh como shell por defecto...'
+  if chsh -s "$zsh_path"; then
+    record_shell_changed "$zsh_path"
+    success "Shell por defecto cambiado a $zsh_path"
+    info 'El cambio será efectivo al iniciar una nueva sesión de usuario.'
+    printf '  Para usar Zsh ahora en esta terminal: exec zsh\n'
+  else warn "Ejecuta manualmente: chsh -s $zsh_path"; fi
+}

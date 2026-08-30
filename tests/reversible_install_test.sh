@@ -56,7 +56,7 @@ run_install() {
   (
     cd "$home"
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
-      SHELL="$FAKE_BIN/zsh" STOW_TEST_LOG="$STOW_LOG" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh STOW_TEST_LOG="$STOW_LOG" \
       GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
       "$FIXTURE_REPO/install.sh" "$@"
   ) > "$output" 2>&1
@@ -68,7 +68,7 @@ run_install_with_input() {
   printf '%b' "$input" | (
     cd "$home"
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
-      SHELL="$FAKE_BIN/zsh" STOW_TEST_LOG="$STOW_LOG" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh STOW_TEST_LOG="$STOW_LOG" \
       GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
       "$FIXTURE_REPO/install.sh" "$@"
   ) > "$output" 2>&1
@@ -84,7 +84,7 @@ cp -R "$ROOT_DIR/install.sh" "$ROOT_DIR/scripts" "$ROOT_DIR/zsh" "$ROOT_DIR/git"
 
 # Ningún gestor de paquetes real se ejecuta en la copia de prueba.
 for platform_script in macos arch fedora debian; do
-  printf '%s\n' '#!/usr/bin/env bash' 'install_system_packages() { :; }' \
+  printf '%s\n' '#!/usr/bin/env bash' 'get_system_packages() { SYSTEM_PACKAGES=(); }' 'install_system_packages() { :; }' \
     > "$FIXTURE_REPO/scripts/$platform_script.sh"
 done
 
@@ -135,7 +135,7 @@ cycle_a="$(active_cycle_dir "$home_a")"
 [[ -L "$home_a/.zshrc" && -L "$home_a/.gitconfig" ]] || fail 'Stow no desplegó los enlaces esperados'
 assert_contains "$cycle_a/manifest.tsv" $'.zshrc\tmissing\t-\t-\tstow\tzsh/.zshrc'
 assert_contains "$cycle_a/manifest.tsv" $'.gitconfig\tmissing\t-\t-\tstow\tgit/.gitconfig'
-assert_contains "$cycle_a/metadata.tsv" $'format_version\t1'
+assert_contains "$cycle_a/metadata.tsv" $'format_version\t2'
 assert_contains "$cycle_a/metadata.tsv" $'profile\tserver'
 
 # D: una segunda instalación reutiliza el mismo ciclo y no modifica el manifest.
@@ -155,13 +155,13 @@ run_install "$home_a" "$home_a/dry-run.out" --uninstall --dry-run
 [[ "$(< "$cycle_a/status")" == "$status_before" ]] || fail 'dry-run cambió el estado'
 assert_contains "$home_a/dry-run.out" 'Dry-run: no se ha modificado ningún archivo.'
 
-# F, G y O: uninstall retira lo gestionado, conserva herramientas y marca restored.
+# F, G y O: uninstall retira lo gestionado y marca restored.
 run_install "$home_a" "$home_a/uninstall.out" --uninstall --yes
 [[ ! -e "$home_a/.zshrc" && ! -L "$home_a/.zshrc" ]] || fail 'no se retiró un enlace originalmente missing'
 [[ ! -e "$home_a/.gitconfig" && ! -L "$home_a/.gitconfig" ]] || fail 'no se retiró .gitconfig'
 [[ -d "$home_a/.oh-my-zsh" ]] || fail 'se eliminó una herramienta que debía conservarse'
 assert_file_content "$cycle_a/status" 'restored'
-assert_contains "$home_a/uninstall.out" 'Los paquetes y herramientas instalados se han conservado.'
+assert_contains "$home_a/uninstall.out" 'La configuración y el entorno atribuible a este ciclo se han restaurado.'
 
 # S: un segundo uninstall es idempotente.
 run_install "$home_a" "$home_a/second-uninstall.out" --uninstall --yes

@@ -100,6 +100,7 @@ Para inspeccionar o restaurar:
 ./install.sh --status
 ./install.sh --uninstall --dry-run
 ./install.sh --uninstall
+./install.sh --uninstall --keep-packages
 ./install.sh --uninstall --yes
 ```
 
@@ -108,12 +109,21 @@ ruta fue sustituida o modificada después, aborta antes de sobrescribirla. Las i
 anteriores al sistema de baseline se reconocen como tales: solo pueden retirar enlaces Stow
 verificables y no prometen reconstruir un estado previo desconocido.
 
-No se eliminan paquetes, herramientas, el repositorio ni extensiones de VS Code. Tampoco se
-revierten `.bash_history`, `.zsh_history` o su backup de migración, y nunca se toca la
+Por defecto, una baseline de formato 2 restaura el shell solo si aún coincide con el que puso
+el ciclo y retira exclusivamente paquetes explícitos que ese ciclo introdujo. No usa
+`autoremove`; si el preflight detecta retiradas laterales no registradas, aborta. También puede
+retirar clones upstream intactos y directorios creados que hayan quedado vacíos.
+`--keep-packages` conserva paquetes y clones upstream, realizando solo
+el rollback de configuración, shell y directorios. Las baselines de formato 1 mantienen el
+rollback conservador antiguo y no inventan estado previo ausente.
+
+Nunca se eliminan el repositorio ni extensiones de VS Code. Tampoco se revierten
+`.bash_history`, `.zsh_history` o su backup de migración, y nunca se toca la
 configuración local `~/.ssh/config.d/*.conf`. Para VS Code, la baseline es la fuente de verdad
 del rollback; `settings.json.pre-dotfiles` se registra como ruta gestionada dentro del mismo
 ciclo cuando el instalador lo crea. Por seguridad, tampoco se revierte automáticamente
-el shell de login ni se relajan los permisos `0700` aplicados a los directorios SSH.
+una modificación posterior del usuario. Los modes de directorios se restauran únicamente si
+siguen coincidiendo con el valor aplicado por el instalador.
 
 Dry-run contra un HOME temporal:
 

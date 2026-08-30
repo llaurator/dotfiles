@@ -14,6 +14,7 @@ DRY_RUN=0
 UNINSTALL=0
 SHOW_STATUS=0
 BACKUP_CONFLICTS=0
+KEEP_PACKAGES=0
 
 usage() {
     cat <<'HELP'
@@ -25,6 +26,7 @@ Uso:
   ./install.sh --profile server --yes --backup-conflicts
   ./install.sh --uninstall
   ./install.sh --uninstall --dry-run
+  ./install.sh --uninstall --keep-packages
   ./install.sh --status
   ./install.sh --migrate-bash-history
   ./install.sh --migrate-bash-history --dry-run
@@ -35,6 +37,7 @@ Opciones:
       --migrate-bash-history
                           Importar de forma segura ~/.bash_history en ~/.zsh_history
       --uninstall         Retirar dotfiles y restaurar la baseline disponible
+      --keep-packages     Con --uninstall, conservar paquetes y upstream
       --status            Mostrar el estado sin modificar archivos
       --backup-conflicts  Respaldar conflictos explícitamente antes de instalar
       --dry-run           Simular migración o desinstalación sin modificar archivos
@@ -48,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         -y|--yes) ASSUME_YES=1; shift ;;
         --migrate-bash-history) MIGRATE_BASH_HISTORY=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
+        --keep-packages) KEEP_PACKAGES=1; shift ;;
         --status) SHOW_STATUS=1; shift ;;
         --backup-conflicts) BACKUP_CONFLICTS=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
@@ -67,6 +71,9 @@ fi
 if [[ "$BACKUP_CONFLICTS" -eq 1 ]] && (( explicit_actions > 0 )); then
     die '--backup-conflicts solo puede usarse al instalar.'
 fi
+if [[ "$KEEP_PACKAGES" -eq 1 && "$UNINSTALL" -ne 1 ]]; then
+    die '--keep-packages solo puede usarse con --uninstall.'
+fi
 
 print_banner
 ACTION='install'
@@ -83,7 +90,7 @@ fi
 case "$ACTION" in
   exit) info 'Hasta la próxima.'; exit 0 ;;
   status) show_dotfiles_status; exit 0 ;;
-  uninstall) uninstall_dotfiles "$DRY_RUN"; exit 0 ;;
+  uninstall) uninstall_dotfiles "$DRY_RUN" "$KEEP_PACKAGES"; exit 0 ;;
   migrate)
     source "$ROOT_DIR/scripts/history.sh"
     migrate_bash_history "$DRY_RUN"
@@ -118,6 +125,7 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
 fi
 
 plan_reversible_install "$PROFILE"
+begin_reversible_install "$PROFILE"
 
 info "Instalando paquetes del sistema..."
 case "$DOTFILES_OS" in
@@ -131,10 +139,13 @@ case "$DOTFILES_OS" in
         esac
         ;;
 esac
+record_packages_before
 install_system_packages
+record_packages_after
 
+record_upstream_before
 install_common_components
-begin_reversible_install "$PROFILE"
+record_upstream_after
 write_profile "$PROFILE"
 mark_path_if_changed '.config/dotfiles/profile' profile '-'
 deploy_stow_packages "$PROFILE"
@@ -142,6 +153,7 @@ configure_git_identity
 mark_path_if_changed '.config/git/local.gitconfig' git '-'
 configure_vscode "$PROFILE"
 mark_vscode_paths_if_changed "$PROFILE"
+record_directories_after
 ensure_zsh_shell
 
 success "Instalación terminada."

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-readonly BASELINE_FORMAT_VERSION='1'
+readonly BASELINE_FORMAT_VERSION='2'
+BASELINE_FORMAT=''
 STOW_PACKAGES=()
 CONFLICT_RELS=()
 CONFLICT_SOURCES=()
@@ -195,7 +196,9 @@ validate_metadata() {
     esac
     count=$((count + 1))
   done < "$metadata"
-  [[ "$count" -eq 7 && "$format" == "$BASELINE_FORMAT_VERSION" ]] || die 'Versión o campos de metadata no válidos.'
+  [[ "$count" -eq 7 ]] || die 'Campos de metadata no válidos.'
+  case "$format" in 1|2) ;; *) die 'Versión de metadata no soportada.' ;; esac
+  BASELINE_FORMAT="$format"
   [[ "$installation_id" == "$ACTIVE_CYCLE" && "$metadata_home" == "$HOME" ]] ||
     die 'La baseline no pertenece al HOME o ciclo actual.'
   validate_profile "$profile"
@@ -320,6 +323,7 @@ validate_active_cycle() {
   validate_metadata
   validate_manifest
   validate_ownership
+  if [[ "$BASELINE_FORMAT" == 2 ]]; then validate_environment_manifest; fi
 }
 
 create_cycle() {
@@ -351,6 +355,10 @@ create_cycle() {
   } > "$ACTIVE_CYCLE_DIR/metadata.tsv"
   printf 'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint\n' > "$MANIFEST_FILE"
   printf 'relative_path\tkind\tproof\tsource\n' > "$OWNERSHIP_FILE"
+  printf 'key\tbefore\tafter\n' > "$ACTIVE_CYCLE_DIR/environment.tsv"
+  printf 'package\tmanager\tstate\n' > "$ACTIVE_CYCLE_DIR/packages.tsv"
+  printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\n' > "$ACTIVE_CYCLE_DIR/upstream.tsv"
+  printf 'relative_path\texisted_before\ttype\tmode\tinstalled_mode\n' > "$ACTIVE_CYCLE_DIR/directories.tsv"
   printf 'active\n' > "$ACTIVE_CYCLE_DIR/status"
   temporary_active="$STATE_ROOT/.active.$$"
   printf '%s\n' "$ACTIVE_CYCLE" > "$temporary_active"
@@ -358,7 +366,9 @@ create_cycle() {
   umask "$old_umask"
   BASELINE_STATUS='active'
   BASELINE_MODE='active'
+  BASELINE_FORMAT="$BASELINE_FORMAT_VERSION"
   success "Baseline creada: $ACTIVE_CYCLE"
+  record_environment_baseline
 }
 
 copy_path_to_backup() {
@@ -547,6 +557,7 @@ begin_reversible_install() {
     record_baseline_path "$VSCODE_SETTINGS_REL" vscode '-'
     record_baseline_path "$VSCODE_BACKUP_REL" vscode_backup '-'
   fi
+  record_manifest_parent_directories
   validate_active_cycle
 }
 
@@ -691,7 +702,7 @@ legacy_uninstall() {
 }
 
 uninstall_dotfiles() {
-  local dry_run="$1"
+  local dry_run="$1" keep_packages="${2:-0}"
   validate_home_and_state
   if ! validate_active_cycle; then
     legacy_uninstall "$dry_run"
@@ -714,14 +725,27 @@ uninstall_dotfiles() {
   fi
   preflight_restore
   print_restore_plan
+  if [[ "$BASELINE_FORMAT" == 1 ]]; then
+    warn 'Baseline v1: no dispone de tracking completo de shell, paquetes, upstream, fuentes o directorios.'
+  else
+    preflight_environment_restore "$keep_packages"
+    print_environment_restore_plan "$keep_packages"
+  fi
   if [[ "$dry_run" -eq 1 ]]; then info 'Dry-run: no se ha modificado ningún archivo.'; return 0; fi
   confirm_restore
   remove_owned_configuration
   restore_baseline_files
+  if [[ "$BASELINE_FORMAT" == 2 ]]; then
+    restore_login_shell
+    if [[ "$keep_packages" -eq 0 ]]; then
+      remove_owned_upstream
+      remove_cycle_packages
+    fi
+    restore_directory_modes_and_remove_empty
+  fi
   set_cycle_restored
-  success 'La configuración se ha restaurado. Los paquetes y herramientas instalados se han conservado.'
+  if [[ "$keep_packages" -eq 1 || "$BASELINE_FORMAT" == 1 ]]; then success 'La configuración se ha restaurado. Los paquetes y herramientas instalados se han conservado.'; else success 'La configuración y el entorno atribuible a este ciclo se han restaurado.'; fi
   info 'Los historiales Bash/Zsh, extensiones de VS Code y configuración SSH local se han conservado.'
-  info 'El shell de login y los permisos seguros de los directorios SSH no se revierten automáticamente.'
   info "El repositorio se conserva en $DOTFILES_ROOT"
 }
 
@@ -737,21 +761,271 @@ package_stow_status() {
 }
 
 show_dotfiles_status() {
-  local profile='no configurado' baseline='no disponible' installed='no' package
+  local profile='no configurado' baseline='no disponible' installed='no' package shell hosts='ninguno'
   validate_home_and_state
   if [[ -f "$HOME/.config/dotfiles/profile" && ! -L "$HOME/.config/dotfiles/profile" ]]; then
     IFS= read -r profile < "$HOME/.config/dotfiles/profile" || profile='no configurado'
     case "$profile" in personal|work|server) ;; *) profile='desconocido' ;; esac
   fi
-  if validate_active_cycle; then baseline="$BASELINE_STATUS ($ACTIVE_CYCLE)"; fi
+  if validate_active_cycle; then baseline="$BASELINE_STATUS, formato $BASELINE_FORMAT ($ACTIVE_CYCLE)"; fi
   if managed_dotfiles_exist; then installed='yes'; fi
   printf '\nDotfiles status\n\n'
-  printf 'Repo:       %s\nProfile:    %s\nBaseline:   %s\nInstalled:  %s\n\n' "$DOTFILES_ROOT" "$profile" "$baseline" "$installed"
+  shell="$(current_login_shell)"
+  printf 'Repo:       %s\nProfile:    %s\nBaseline:   %s\nInstalled:  %s\nShell:      %s\n\n' "$DOTFILES_ROOT" "$profile" "$baseline" "$installed" "$shell"
   printf 'Stow:\n'
   for package in zsh git btop ssh vscode; do
     if package_stow_status "$package"; then success "$package"; else printf '  - %s\n' "$package"; fi
   done
   printf '\nLocal:\n'
   if [[ -n "$(git config --get user.name 2>/dev/null || true)" && -n "$(git config --get user.email 2>/dev/null || true)" ]]; then success 'Identidad Git configurada'; else printf '  - Identidad Git incompleta\n'; fi
-  if [[ -d "$HOME/.ssh/config.d" ]]; then success 'SSH config.d presente'; else printf '  - SSH config.d ausente\n'; fi
+  if [[ -d "$HOME/.ssh/config.d" ]] && compgen -G "$HOME/.ssh/config.d/*.conf" >/dev/null; then hosts='configurados'; fi
+  printf '  SSH local hosts: %s\n' "$hosts"
+  printf '\nTools:\n'
+  for package in zsh stow fzf zoxide eza bat rg btop grc direnv; do if command_exists "$package"; then printf '  ✓ %s\n' "$package"; else printf '  - %s\n' "$package"; fi; done
+}
+
+# Environment rollback (baseline format 2).  Format 1 deliberately never enters
+# these functions: absence of evidence is not reconstructed from current state.
+current_login_shell() {
+  local entry
+  if [[ -n "${DOTFILES_LOGIN_SHELL:-}" ]]; then printf '%s' "$DOTFILES_LOGIN_SHELL"; return; fi
+  if command_exists getent; then
+    entry="$(getent passwd "${USER:-$(id -un)}" 2>/dev/null || true)"
+    [[ -n "$entry" ]] && { printf '%s' "${entry##*:}"; return; }
+  fi
+  if [[ "$(uname -s)" == Darwin ]] && command_exists dscl; then
+    entry="$(dscl . -read "/Users/${USER:-$(id -un)}" UserShell 2>/dev/null || true)"
+    if [[ -n "$entry" ]]; then awk '{print $2}' <<< "$entry"; return; fi
+  fi
+  printf '%s' "${SHELL:-}"
+}
+
+environment_set() {
+  local key="$1" before="$2" after="$3" file="$ACTIVE_CYCLE_DIR/environment.tsv" tmp
+  tmp="$ACTIVE_CYCLE_DIR/.environment.$$"
+  awk -F '\t' -v wanted="$key" 'NR == 1 || $1 != wanted' "$file" > "$tmp"
+  printf '%s\t%s\t%s\n' "$key" "${before:--}" "${after:--}" >> "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+environment_field() { awk -F '\t' -v key="$1" -v col="$2" 'NR>1 && $1==key {print $col; exit}' "$ACTIVE_CYCLE_DIR/environment.tsv"; }
+
+record_environment_baseline() {
+  environment_set login_shell "$(current_login_shell)" '-'
+  record_relevant_directories
+}
+
+record_shell_changed() {
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  environment_set login_shell "$(environment_field login_shell 2)" "$1"
+}
+
+record_relevant_directories() {
+  local rel target existed type mode
+  local -a dirs=(.config .config/zsh .config/dotfiles .config/dotfiles/vscode .config/btop .config/Code .config/Code/User .ssh .ssh/config.d .local .local/share)
+  for rel in "${dirs[@]}"; do
+    target="$HOME/$rel"; existed=no; type=missing; mode=-
+    if [[ -e "$target" || -L "$target" ]]; then existed=yes; type="$(path_type "$target")"; [[ "$type" == directory ]] && mode="$(path_mode "$target")"; fi
+    printf '%s\t%s\t%s\t%s\t-\n' "$rel" "$existed" "$type" "$mode" >> "$ACTIVE_CYCLE_DIR/directories.tsv"
+  done
+}
+
+record_one_directory_baseline() {
+  local rel="$1" target existed=no type=missing mode=-
+  validate_relative_path "$rel" || return 0
+  awk -F '\t' -v wanted="$rel" 'NR>1 && $1==wanted {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/directories.tsv" && return 0
+  target="$HOME/$rel"
+  if [[ -e "$target" || -L "$target" ]]; then existed=yes; type="$(path_type "$target")"; [[ "$type" == directory ]] && mode="$(path_mode "$target")"; fi
+  printf '%s\t%s\t%s\t%s\t-\n' "$rel" "$existed" "$type" "$mode" >> "$ACTIVE_CYCLE_DIR/directories.tsv"
+}
+
+record_manifest_parent_directories() {
+  local rel parent
+  [[ "$BASELINE_FORMAT" == 2 ]] || return 0
+  while IFS=$'\t' read -r rel _; do
+    parent="${rel%/*}"; [[ "$parent" != "$rel" ]] || continue
+    while [[ -n "$parent" && "$parent" != . ]]; do record_one_directory_baseline "$parent"; [[ "$parent" == */* ]] || break; parent="${parent%/*}"; done
+  done < <(sed -n '2,$p' "$MANIFEST_FILE")
+}
+
+record_directories_after() {
+  local file="$ACTIVE_CYCLE_DIR/directories.tsv" tmp="$ACTIVE_CYCLE_DIR/.directories.$$" rel existed type mode installed target
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  IFS= read -r _ < "$file"; printf 'relative_path\texisted_before\ttype\tmode\tinstalled_mode\n' > "$tmp"
+  while IFS=$'\t' read -r rel existed type mode installed; do
+    target="$HOME/$rel"; installed=-
+    [[ -d "$target" && ! -L "$target" ]] && installed="$(path_mode "$target")"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$rel" "$existed" "$type" "$mode" "$installed" >> "$tmp"
+  done < <(sed -n '2,$p' "$file")
+  mv -f "$tmp" "$file"
+}
+
+package_manager_name() { case "$DOTFILES_DISTRO" in arch) echo pacman;; fedora) echo dnf;; debian) echo apt;; macos) echo brew;; esac; }
+package_is_installed() {
+  case "$DOTFILES_DISTRO" in
+    arch) pacman -Q -- "$1" >/dev/null 2>&1 ;;
+    fedora) rpm -q -- "$1" >/dev/null 2>&1 ;;
+    debian) dpkg-query -W -f='${db:Status-Abbrev}' -- "$1" 2>/dev/null | grep -q '^ii ' ;;
+    macos) brew list --formula "$1" >/dev/null 2>&1 || brew list --cask "$1" >/dev/null 2>&1 ;;
+  esac
+}
+record_packages_before() {
+  local package manager
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  awk 'NR>1 {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv" && return 0
+  get_system_packages; manager="$(package_manager_name)"
+  for package in "${SYSTEM_PACKAGES[@]}"; do
+    if package_is_installed "$package"; then printf '%s\t%s\talready_present\n' "$package" "$manager"; else printf '%s\t%s\tpending\n' "$package" "$manager"; fi
+  done >> "$ACTIVE_CYCLE_DIR/packages.tsv"
+}
+record_packages_after() {
+  local file="$ACTIVE_CYCLE_DIR/packages.tsv" tmp="$ACTIVE_CYCLE_DIR/.packages.$$" package manager state
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  printf 'package\tmanager\tstate\n' > "$tmp"
+  while IFS=$'\t' read -r package manager state; do
+    [[ "$state" == pending ]] && { if package_is_installed "$package"; then state=installed_by_cycle; else state=not_installed; fi; }
+    printf '%s\t%s\t%s\n' "$package" "$manager" "$state" >> "$tmp"
+  done < <(sed -n '2,$p' "$file")
+  mv -f "$tmp" "$file"
+}
+
+upstream_specs() {
+  printf '%s\t%s\t%s\n' \
+    'Oh My Zsh' '.oh-my-zsh' 'https://github.com/ohmyzsh/ohmyzsh.git' \
+    'Powerlevel10k' '.oh-my-zsh/custom/themes/powerlevel10k' 'https://github.com/romkatv/powerlevel10k.git' \
+    'zsh-autosuggestions' '.oh-my-zsh/custom/plugins/zsh-autosuggestions' 'https://github.com/zsh-users/zsh-autosuggestions.git' \
+    'zsh-syntax-highlighting' '.oh-my-zsh/custom/plugins/zsh-syntax-highlighting' 'https://github.com/zsh-users/zsh-syntax-highlighting.git' \
+    'zsh-history-substring-search' '.oh-my-zsh/custom/plugins/zsh-history-substring-search' 'https://github.com/zsh-users/zsh-history-substring-search.git'
+}
+record_upstream_before() {
+  local name rel origin existed
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  awk 'NR>1 {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/upstream.tsv" && return 0
+  while IFS=$'\t' read -r name rel origin; do existed=no; [[ -e "$HOME/$rel" || -L "$HOME/$rel" ]] && existed=yes; printf '%s\t%s\t%s\t%s\t-\n' "$name" "$rel" "$existed" "$origin"; done < <(upstream_specs) >> "$ACTIVE_CYCLE_DIR/upstream.tsv"
+}
+record_upstream_after() {
+  local file="$ACTIVE_CYCLE_DIR/upstream.tsv" tmp="$ACTIVE_CYCLE_DIR/.upstream.$$" name rel existed origin commit
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\n' > "$tmp"
+  while IFS=$'\t' read -r name rel existed origin commit; do
+    commit=-; [[ "$existed" == no && -d "$HOME/$rel/.git" ]] && commit="$(git -C "$HOME/$rel" rev-parse HEAD 2>/dev/null || printf '-')"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$rel" "$existed" "$origin" "$commit" >> "$tmp"
+  done < <(sed -n '2,$p' "$file"); mv -f "$tmp" "$file"
+}
+
+validate_environment_manifest() {
+  local f header name rel existed origin commit package manager state key before after extra type mode installed_mode
+  for f in environment.tsv packages.tsv upstream.tsv directories.tsv; do [[ -f "$ACTIVE_CYCLE_DIR/$f" && ! -L "$ACTIVE_CYCLE_DIR/$f" ]] || die "Manifest de entorno ausente: $f"; done
+  IFS= read -r header < "$ACTIVE_CYCLE_DIR/environment.tsv"; [[ "$header" == $'key\tbefore\tafter' ]] || die 'Manifest de entorno corrupto.'
+  IFS= read -r header < "$ACTIVE_CYCLE_DIR/packages.tsv"; [[ "$header" == $'package\tmanager\tstate' ]] || die 'Manifest de paquetes corrupto.'
+  while IFS=$'\t' read -r key before after extra; do [[ -n "$key" && -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de entorno corrupta.'; [[ "$key" == login_shell ]] || die 'Clave de entorno desconocida.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/environment.tsv")
+  while IFS=$'\t' read -r package manager state extra; do [[ "$package" =~ ^[A-Za-z0-9@+._-]+$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$state" =~ ^(already_present|installed_by_cycle|not_installed|pending)$ && -z "$extra" ]] || die 'Entrada de paquete corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  while IFS=$'\t' read -r name rel existed origin commit extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$origin" == https://github.com/* && -z "$extra" ]] || die 'Entrada upstream corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
+  while IFS=$'\t' read -r rel existed type mode installed_mode extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$type" =~ ^(missing|directory|file|symlink|unsupported)$ && -n "$mode" && -n "$installed_mode" && -z "$extra" ]] || die 'Entrada de directorio corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/directories.tsv")
+}
+
+git_origin_matches() {
+  local actual
+  actual="$(git -C "$1" remote get-url origin 2>/dev/null || true)"
+  [[ "$actual" == "$2" || "$actual" == "${2%.git}" || "${actual%.git}" == "${2%.git}" ]]
+}
+upstream_is_pristine() {
+  local path="$1" origin="$2" commit="$3"
+  [[ -d "$path/.git" && "$commit" != - ]] || return 1
+  git_origin_matches "$path" "$origin" || return 1
+  [[ "$(git -C "$path" rev-parse HEAD 2>/dev/null || true)" == "$commit" ]] || return 1
+  [[ -z "$(git -C "$path" status --porcelain --untracked-files=normal 2>/dev/null)" ]]
+}
+
+preflight_environment_restore() {
+  local before after current name rel existed origin commit package manager state
+  before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
+  if [[ "$after" != - && "$current" != "$after" ]]; then warn "El shell cambió después de la instalación ($current); se conservará."; fi
+  if [[ "$1" -eq 0 ]]; then
+    while IFS=$'\t' read -r name rel existed origin commit; do
+      [[ "$existed" == no ]] || continue
+      if [[ -e "$HOME/$rel" ]] && ! upstream_is_pristine "$HOME/$rel" "$origin" "$commit"; then warn "$name contiene cambios o datos posteriores; se conservará."; fi
+    done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
+    while IFS=$'\t' read -r package manager state; do
+      case "$state" in already_present|installed_by_cycle|not_installed) ;; *) die 'Estado de paquete no válido en baseline.';; esac
+    done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+    preflight_package_removal
+  fi
+}
+
+preflight_package_removal() {
+  local package manager state output line candidate; local -a packages=() extras=()
+  while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] && package_is_installed "$package" && packages+=("$package"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  (( ${#packages[@]} )) || return 0
+  manager="$(awk -F '\t' '$3=="installed_by_cycle" {print $2; exit}' "$ACTIVE_CYCLE_DIR/packages.tsv")"
+  case "$manager" in
+    apt)
+      output="$(LC_ALL=C apt-get -s remove "${packages[@]}")" || die 'No se pudo simular la retirada de paquetes.'
+      while read -r line; do [[ "$line" == Remv\ * ]] || continue; candidate="${line#Remv }"; candidate="${candidate%% *}"; array_contains "$candidate" "${packages[@]}" || extras+=("$candidate"); done <<< "$output"
+      ;;
+    dnf)
+      output="$(LC_ALL=C dnf remove --assumeno --no-autoremove "${packages[@]}" 2>&1)" || true
+      while read -r candidate; do candidate="${candidate%%.*}"; [[ -n "$candidate" ]] && array_contains "$candidate" "${packages[@]}" || [[ -z "$candidate" ]] || extras+=("$candidate"); done < <(awk '/^Removing:/{on=1;next}/^Transaction Summary/{on=0} on && $1 !~ /^Package$/ && NF>=3 {print $1}' <<< "$output")
+      ;;
+    pacman) : ;; # pacman -R refuses required targets and does not cascade.
+    brew)
+      for package in "${packages[@]}"; do output="$(brew uses --installed "$package" 2>/dev/null || true)"; [[ -z "$output" ]] || extras+=("dependientes-de-$package"); done
+      ;;
+  esac
+  (( ${#extras[@]} == 0 )) || { warn "El gestor retiraría elementos no registrados: ${extras[*]}"; die 'Se aborta antes de modificar la máquina.'; }
+}
+
+array_contains() { local wanted="$1" item; shift; for item in "$@"; do [[ "$item" == "$wanted" ]] && return 0; done; return 1; }
+
+print_environment_restore_plan() {
+  local keep="$1" before after current package manager state name rel existed origin commit
+  printf '\nShell:\n'; before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
+  if [[ "$after" != - && "$current" == "$after" ]]; then printf '  %s → %s\n' "$after" "$before"; elif [[ "$after" == - ]]; then printf '  conservar %s\n' "$current"; else printf '  conservar %s (cambio posterior)\n' "$current"; fi
+  printf '\nPaquetes instalados por este ciclo:\n'
+  while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] || continue; if [[ "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$package"; else printf '  retirar %s\n' "$package"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  printf '\nPaquetes que ya existían:\n'; while IFS=$'\t' read -r package manager state; do [[ "$state" == already_present ]] && printf '  conservar %s\n' "$package"; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  printf '\nUpstream:\n'; while IFS=$'\t' read -r name rel existed origin commit; do if [[ "$existed" == yes || "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$name"; elif upstream_is_pristine "$HOME/$rel" "$origin" "$commit"; then printf '  retirar %s\n' "$name"; else printf '  conservar %s (cambios posteriores)\n' "$name"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
+  printf '\nDirectorios:\n  retirar directorios vacíos creados por este ciclo; restaurar modes solo si no cambiaron después\n'
+  printf '\nHistoriales:\n  conservar .bash_history, .zsh_history y .zsh_history.pre-bash-migration\nRepo:\n  conservar %s\n' "$DOTFILES_ROOT"
+}
+
+restore_login_shell() {
+  local before after current
+  before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
+  [[ "$after" != - && "$before" != - ]] || return 0
+  if [[ "$current" == "$after" ]]; then chsh -s "$before" || die 'No se pudo restaurar el shell de login.'; printf '%s\tshell-restored\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$before" >> "$ACTIVE_CYCLE_DIR/restore.log"; fi
+}
+
+remove_owned_upstream() {
+  local -a names=() rels=() origins=() commits=(); local name rel existed origin commit i target
+  while IFS=$'\t' read -r name rel existed origin commit; do [[ "$existed" == no ]] || continue; names+=("$name"); rels+=("$rel"); origins+=("$origin"); commits+=("$commit"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
+  for ((i=${#rels[@]}-1; i>=0; i--)); do
+    validate_target_containment "${rels[i]}"; target="$HOME/${rels[i]}"
+    if upstream_is_pristine "$target" "${origins[i]}" "${commits[i]}"; then rm -rf -- "$target"; printf '%s\tupstream-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${names[i]}" >> "$ACTIVE_CYCLE_DIR/restore.log"; fi
+  done
+}
+
+remove_cycle_packages() {
+  local manager='' package state recorded_manager; local -a packages=()
+  while IFS=$'\t' read -r package recorded_manager state; do [[ "$state" == installed_by_cycle ]] || continue; package_is_installed "$package" || continue; manager="$recorded_manager"; packages+=("$package"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  (( ${#packages[@]} )) || return 0
+  case "$manager" in
+    dnf) sudo dnf remove -y --no-autoremove "${packages[@]}" ;;
+    pacman) sudo pacman -R --noconfirm "${packages[@]}" ;;
+    apt) sudo apt-get remove -y "${packages[@]}" ;;
+    brew) brew uninstall "${packages[@]}" ;;
+    *) die 'Gestor de paquetes desconocido en baseline.' ;;
+  esac || die 'No se pudieron retirar todos los paquetes registrados; el ciclo queda activo.'
+  printf '%s\tpackages-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${packages[*]}" >> "$ACTIVE_CYCLE_DIR/restore.log"
+}
+
+restore_directory_modes_and_remove_empty() {
+  local rel existed type old_mode installed_mode target
+  while IFS=$'\t' read -r rel existed type old_mode installed_mode; do
+    target="$HOME/$rel"
+    if [[ "$existed" == yes && "$type" == directory && "$old_mode" != - && "$installed_mode" != - && -d "$target" && ! -L "$target" && "$(path_mode "$target")" == "$installed_mode" ]]; then chmod "$old_mode" "$target"; fi
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/directories.tsv")
+  while IFS=$'\t' read -r rel existed type old_mode installed_mode; do
+    target="$HOME/$rel"; [[ "$existed" == no && -d "$target" && ! -L "$target" ]] && rmdir -- "$target" 2>/dev/null || true
+  done < <(tail -n +2 "$ACTIVE_CYCLE_DIR/directories.tsv" | awk -F '\t' '{print length($1) "\t" $0}' | sort -rn | cut -f2-)
 }
