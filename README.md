@@ -4,10 +4,38 @@ Dotfiles centralizados para macOS Apple Silicon (también compatible con Homebre
 Arch, Fedora/Fedora Asahi y Debian/Ubuntu. GNU Stow crea los enlaces y un instalador Bash
 detecta la plataforma, instala dependencias y activa uno de tres perfiles.
 
-## Instalación y perfiles
+## Instalación rápida
+
+La opción más sencilla descarga el bootstrap auditable desde GitHub y abre el menú
+interactivo del instalador:
 
 ```bash
-git clone <URL-DEL-REPOSITORIO> ~/dotfiles
+curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh | bash
+```
+
+Instalación no interactiva para un servidor:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
+  | bash -s -- --profile server --yes
+```
+
+Instalación reproducible desde una release concreta:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
+  | bash -s -- --ref v1.1.0 --profile server --yes
+```
+
+El repositorio permanece en `${XDG_DATA_HOME:-$HOME/.local/share}/dotfiles`, o en la ruta
+absoluta indicada mediante `DOTFILES_DIR`. Es necesario conservarlo porque los enlaces de
+GNU Stow apuntan a sus archivos. El bootstrap clona por HTTPS, actualiza `main` solo mediante
+fast-forward y conserva cualquier cambio local sin aplicar `reset` ni `clean`.
+
+## Instalación manual y perfiles
+
+```bash
+git clone https://github.com/llaurator/dotfiles.git ~/dotfiles
 cd ~/dotfiles
 ./install.sh
 ```
@@ -125,13 +153,14 @@ cargarlos. `macos.zsh`, cargado antes de `common.zsh`, busca Homebrew en
 Antes de desplegar, ejecuta:
 
 ```bash
-bash -n install.sh scripts/*.sh
+bash -n bootstrap.sh install.sh scripts/*.sh tests/*.sh
 zsh -n zsh/.zshrc zsh/.config/zsh/*.zsh
 git diff --check
 ./install.sh --help
 ```
 
-Si están disponibles, añade `shellcheck install.sh scripts/*.sh` y `jq empty` sobre
+Si están disponibles, añade `shellcheck bootstrap.sh install.sh scripts/*.sh tests/*.sh` y
+`jq empty` sobre
 `vscode/.config/dotfiles/vscode/settings.json`, además del dry-run temporal anterior.
 `./install.sh --help` solo muestra ayuda; no instala nada.
 
