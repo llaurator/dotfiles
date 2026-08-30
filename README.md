@@ -46,13 +46,15 @@ El modo interactivo ofrece `personal`, `work` y `server`. Para automatización:
 ./install.sh --profile personal --yes
 ./install.sh --profile work --yes
 ./install.sh --profile server --yes
+./install.sh --profile personal --yes --install-vscode
 ```
 
-`--yes` requiere `--profile` y omite las preguntas propias del instalador; `sudo`, el
-gestor de paquetes, `chsh` o macOS aún pueden pedir autorización. El perfil se guarda en
-`~/.config/dotfiles/profile` y `.zshrc` lo carga en cada sesión. `personal` y `work`
-incluyen la capa opcional `development.zsh`; `server` evita SSH cliente del repositorio,
-VS Code y configuración de escritorio.
+`--yes` requiere `--profile` y omite las preguntas propias del instalador; no activa por sí
+solo la instalación opcional de VS Code. Para automatizar ese opt-in en `personal`/`work`
+se usa `--install-vscode`. `sudo`, el gestor de paquetes, `chsh` o macOS aún pueden pedir
+autorización. El perfil se guarda en `~/.config/dotfiles/profile` y `.zshrc` lo carga en cada
+sesión. `personal` y `work` incluyen la capa opcional `development.zsh`; `server` evita SSH
+cliente del repositorio, VS Code y configuración de escritorio.
 
 Los perfiles `personal` y `work` instalan también MesloLGS Nerd Font (cuatro variantes).
 En Linux descargan únicamente esos cuatro TTF desde el tag oficial `v3.5.1` de Nerd Fonts
@@ -131,6 +133,12 @@ ciclo cuando el instalador lo crea. Por seguridad, tampoco se revierte automáti
 una modificación posterior del usuario. Los modes de directorios se restauran únicamente si
 siguen coincidiendo con el valor aplicado por el instalador.
 
+En Fedora, si el ciclo creó `/etc/yum.repos.d/vscode.repo`, también registra su huella y
+solo lo retira después del paquete `code` cuando continúa intacto. Un fichero preexistente
+o modificado se conserva. `--keep-packages` conserva ambos. La clave RPM de Microsoft no
+se elimina: el sistema RPM no permite demostrar de forma segura que ningún otro repositorio
+o paquete la utiliza.
+
 Dry-run contra un HOME temporal:
 
 ```bash
@@ -173,17 +181,22 @@ están ignorados. Revisa siempre `git status` antes de confirmar cambios.
 ## VS Code
 
 La lista versionada contiene exclusivamente Prettier, Ruff, Python Environments, Spanish
-Language Pack y Dracula Official. Python Environments descubre y permite seleccionar los
-entornos virtuales de los proyectos Python, incluidos los directorios `.venv`. Las extensiones
-ya instaladas se detectan sin distinguir mayúsculas y minúsculas, y solo se invoca la
-instalación para las ausentes. `settings.json` activa formato al guardar, Prettier para JS, TS,
-JSON, CSS y HTML, Ruff para Python, limpieza de espacios, newline final, regla a 100, minimapa
-desactivado y `Dracula Theme`. El idioma puede seleccionarse con “Configure Display
-Language”; no se mantiene un fichero de locale dependiente de versión.
+Language Pack y Dracula Official. Para `personal`/`work`, el instalador fusiona además
+`{"locale":"es"}` en `locale.json`, conservando cualquier otra clave. La baseline restaura
+exactamente el fichero anterior al desinstalar y la operación es idempotente. Python
+Environments descubre y permite seleccionar los entornos virtuales de los proyectos Python,
+incluidos los directorios `.venv`. Las extensiones ya instaladas se detectan sin distinguir
+mayúsculas y minúsculas, y solo se invoca la instalación para las ausentes. `settings.json`
+activa formato al guardar, Prettier para JS, TS, JSON, CSS y HTML, Ruff para Python, limpieza
+de espacios, newline final, regla a 100, minimapa desactivado y `Dracula Theme`.
 
-En macOS se instala el cask `visual-studio-code`; en Arch, el paquete oficial `code`.
-Fedora y Debian/Ubuntu no reciben repositorios Microsoft: si `code` falta, se avisa y se
-continúa. La fuente de settings es única. El instalador enlaza a
+Si `code` no existe, la instalación interactiva ofrece instalarlo con respuesta predeterminada
+«no»; `--yes` lo omite salvo que se añada `--install-vscode`. `server` nunca pregunta ni lo
+instala. En macOS el opt-in usa el cask `visual-studio-code`; en Arch, el paquete `code` de
+la distribución. Fedora crea únicamente el repositorio oficial de Microsoft, verifica por
+SHA-256 la clave oficial y solicita el paquete `code`. Debian/Ubuntu conserva el comportamiento
+conservador y no añade repositorios automáticamente. Si `code` ya existía, nunca entra en el
+tracking de paquetes del ciclo. La fuente de settings es única. El instalador enlaza a
 `~/.config/dotfiles/vscode/settings.json` mediante Stow y aplica su contenido a
 `~/Library/Application Support/Code/User/settings.json` en macOS o a
 `${XDG_CONFIG_HOME:-~/.config}/Code/User/settings.json` en Linux. Nunca reemplaza un

@@ -15,6 +15,8 @@ UNINSTALL=0
 SHOW_STATUS=0
 BACKUP_CONFLICTS=0
 KEEP_PACKAGES=0
+INSTALL_VSCODE=0
+REQUEST_INSTALL_VSCODE=0
 
 usage() {
     cat <<'HELP'
@@ -40,6 +42,7 @@ Opciones:
       --keep-packages     Con --uninstall, conservar paquetes, upstream y fuentes
       --status            Mostrar el estado sin modificar archivos
       --backup-conflicts  Respaldar conflictos explícitamente antes de instalar
+      --install-vscode    Instalar VS Code explícitamente en personal/work
       --dry-run           Simular migración o desinstalación sin modificar archivos
   -h, --help              Mostrar ayuda
 HELP
@@ -54,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --keep-packages) KEEP_PACKAGES=1; shift ;;
         --status) SHOW_STATUS=1; shift ;;
         --backup-conflicts) BACKUP_CONFLICTS=1; shift ;;
+        --install-vscode) INSTALL_VSCODE=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Opción desconocida: $1" ;;
@@ -73,6 +77,9 @@ if [[ "$BACKUP_CONFLICTS" -eq 1 ]] && (( explicit_actions > 0 )); then
 fi
 if [[ "$KEEP_PACKAGES" -eq 1 && "$UNINSTALL" -ne 1 ]]; then
     die '--keep-packages solo puede usarse con --uninstall.'
+fi
+if [[ "$INSTALL_VSCODE" -eq 1 ]] && (( explicit_actions > 0 )); then
+    die '--install-vscode solo puede usarse al instalar.'
 fi
 
 print_banner
@@ -109,6 +116,9 @@ if [[ "$ASSUME_YES" -eq 1 && -z "$PROFILE" ]]; then
 fi
 [[ -n "$PROFILE" ]] || PROFILE="$(choose_profile)"
 validate_profile "$PROFILE"
+if [[ "$PROFILE" == server && "$INSTALL_VSCODE" -eq 1 ]]; then
+    die '--install-vscode no puede usarse con el perfil server.'
+fi
 
 printf '\n'
 info "Sistema detectado"
@@ -127,6 +137,8 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
         *) echo "Cancelado."; exit 0 ;;
     esac
 fi
+
+select_vscode_install "$PROFILE"
 
 plan_reversible_install "$PROFILE"
 begin_reversible_install "$PROFILE"

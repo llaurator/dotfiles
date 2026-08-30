@@ -12,8 +12,8 @@ install_system_packages() {
   eval "$("$brew_bin" shellenv)"
   get_system_packages
   brew install "${SYSTEM_FORMULAE[@]}"
-  if [[ "$PROFILE" != server ]] && ! command_exists code; then
+  if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]] && ! command_exists code; then
     brew install --cask visual-studio-code
   fi
 }
-get_system_packages() { SYSTEM_FORMULAE=(git stow jq fzf fd zoxide eza bat ripgrep btop grc git-delta direnv); SYSTEM_PACKAGES=("${SYSTEM_FORMULAE[@]}"); [[ "$PROFILE" == server ]] || SYSTEM_PACKAGES+=(visual-studio-code); }
+get_system_packages() { SYSTEM_FORMULAE=(git stow jq fzf fd zoxide eza bat ripgrep btop grc git-delta direnv); SYSTEM_PACKAGES=("${SYSTEM_FORMULAE[@]}"); if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]]; then SYSTEM_PACKAGES+=(visual-studio-code); fi; }

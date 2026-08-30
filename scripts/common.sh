@@ -9,6 +9,34 @@ install_common_components(){
   install_git_repo https://github.com/zsh-users/zsh-history-substring-search.git "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
 }
 profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
+# shellcheck disable=SC2034 # Consumida por los scripts de plataforma después de source.
+select_vscode_install() {
+  local profile="$1" answer prompt
+  REQUEST_INSTALL_VSCODE=0
+  [[ "$profile" != server ]] || return 0
+  command_exists code && return 0
+  if [[ "$DOTFILES_DISTRO" == debian ]]; then
+    [[ "$INSTALL_VSCODE" -eq 0 ]] || die '--install-vscode no está disponible en Debian/Ubuntu.'
+    return 0
+  fi
+  if [[ "$INSTALL_VSCODE" -eq 1 ]]; then
+    REQUEST_INSTALL_VSCODE=1
+    return 0
+  fi
+  [[ "$ASSUME_YES" -eq 0 ]] || return 0
+  case "$DOTFILES_DISTRO" in
+    arch) prompt='¿Quieres instalar Visual Studio Code desde el repositorio oficial de Arch? [s/N] ' ;;
+    *) prompt='¿Quieres instalar Visual Studio Code desde el repositorio oficial de Microsoft? [s/N] ' ;;
+  esac
+  if ! read -r -p "$prompt" answer; then
+    info 'VS Code no se instalará.'
+    return 0
+  fi
+  case "$answer" in
+    s|S|si|SI|sí|SÍ) REQUEST_INSTALL_VSCODE=1 ;;
+    *) info 'VS Code no se instalará.' ;;
+  esac
+}
 install_nerd_font() {
   local font_dir tmp_dir name target before fingerprint expected url downloaded
   local base_url='https://raw.githubusercontent.com/ryanoasis/nerd-fonts/v3.5.1/patched-fonts/Meslo/S'
@@ -143,9 +171,8 @@ vscode_file_mode() {
 }
 merge_vscode_settings() {
   local settings_source="$1" settings_target="$2"
-  local settings_dir backup temporary mode
+  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode
   settings_dir="${settings_target%/*}"
-  backup="$settings_target.pre-dotfiles"
   mkdir -p "$settings_dir"
 
   if ! jq -e 'type == "object"' "$settings_source" >/dev/null 2>&1; then
@@ -182,10 +209,10 @@ merge_vscode_settings() {
     }
     if cmp -s "$temporary" "$settings_target"; then
       rm -f "$temporary"
-      success 'VS Code: settings.json ya está actualizado.'
+      success "VS Code: $label ya está actualizado."
       return 0
     fi
-    if [[ ! -e "$backup" && ! -L "$backup" ]] && ! cp -p "$settings_target" "$backup"; then
+    if [[ "$backup" != - && ! -e "$backup" && ! -L "$backup" ]] && ! cp -p "$settings_target" "$backup"; then
       rm -f "$temporary"
       warn "VS Code: no se pudo crear el backup $backup; no se modifica el original."
       return 1
@@ -208,7 +235,7 @@ merge_vscode_settings() {
     warn "VS Code: no se pudo aplicar el settings.json fusionado: $settings_target"
     return 1
   fi
-  success 'VS Code: settings.json gestionado y validado.'
+  success "VS Code: $label gestionado y validado."
 }
 vscode_extension_name() {
   case "$1" in
@@ -221,7 +248,7 @@ vscode_extension_name() {
   esac
 }
 configure_vscode() {
-  local profile="$1" settings_source settings_dir settings_target extension installed_extensions extension_name
+  local profile="$1" settings_source settings_dir settings_target locale_source locale_target extension installed_extensions extension_name
   [[ "$profile" != server ]] || return 0
   settings_source="$HOME/.config/dotfiles/vscode/settings.json"
   case "$DOTFILES_OS" in
@@ -232,6 +259,13 @@ configure_vscode() {
   if ! merge_vscode_settings "$settings_source" "$settings_target"; then
     warn 'VS Code: los settings gestionados no pudieron aplicarse; la instalación continúa.'
   fi
+  locale_source="$(mktemp)" || { warn 'VS Code: no se pudo preparar locale.json.'; return 0; }
+  printf '{"locale":"es"}\n' > "$locale_source"
+  locale_target="$settings_dir/locale.json"
+  if ! merge_vscode_settings "$locale_source" "$locale_target" - locale.json; then
+    warn 'VS Code: locale.json no pudo configurarse; la instalación continúa.'
+  fi
+  rm -f -- "$locale_source"
   if ! command_exists code; then
     warn 'No se encontró code; se omite la instalación de extensiones.'
     return 0

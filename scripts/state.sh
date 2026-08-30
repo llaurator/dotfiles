@@ -11,6 +11,7 @@ ACTIVE_CYCLE_DIR=''
 STATE_ROOT=''
 MANIFEST_FILE=''
 OWNERSHIP_FILE=''
+FEDORA_VSCODE_REPO_FILE='/etc/yum.repos.d/vscode.repo'
 
 validate_home_and_state() {
   local state_base
@@ -254,7 +255,7 @@ validate_manifest() {
        -n "$kind" && -n "$source" && -n "$backup_fingerprint" && -z "$extra" ]] || die 'Entrada de manifest corrupta.'
     validate_target_containment "$relative"
     case "$original_type" in missing|file|directory|symlink) ;; *) die 'Tipo original no válido en manifest.' ;; esac
-    case "$kind" in stow|profile|git|vscode|vscode_backup) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
+    case "$kind" in stow|profile|git|vscode|vscode_backup|vscode_locale) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
     if [[ "$kind" == stow ]]; then
       validate_relative_path "$source" || die 'Source Stow no válido en manifest.'
       package="${source%%/*}"
@@ -268,6 +269,7 @@ validate_manifest() {
         git) [[ "$relative" == '.config/git/local.gitconfig' ]] || die 'Ruta de identidad Git no válida.' ;;
         vscode) [[ "$relative" == 'Code/User/settings.json' || "$relative" == */Code/User/settings.json ]] || die 'Ruta de VS Code no válida.' ;;
         vscode_backup) [[ "$relative" == 'Code/User/settings.json.pre-dotfiles' || "$relative" == */Code/User/settings.json.pre-dotfiles ]] || die 'Ruta de backup de VS Code no válida.' ;;
+        vscode_locale) [[ "$relative" == 'Code/User/locale.json' || "$relative" == */Code/User/locale.json ]] || die 'Ruta de locale de VS Code no válida.' ;;
       esac
     fi
     if [[ "$original_type" == missing ]]; then
@@ -305,7 +307,7 @@ validate_ownership() {
         [[ "$proof" == pending || "$proof" =~ ^symlink:[0-9a-f]{64}:[0-9]+$ ]] || die 'Prueba Stow no válida.'
         validate_relative_path "$source" || die 'Source Stow no válido.'
         ;;
-      profile|git|vscode|vscode_backup)
+      profile|git|vscode|vscode_backup|vscode_locale)
         [[ "$source" == '-' && "$proof" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$|^symlink:[0-9a-f]{64}:[0-9]+$|^directory:[0-9a-f]{64}:[0-7]{3,4}$ ]] ||
           die 'Prueba de propiedad no válida.'
         ;;
@@ -447,6 +449,7 @@ mark_stow_package_owned() {
 vscode_managed_relatives() {
   VSCODE_SETTINGS_REL=''
   VSCODE_BACKUP_REL=''
+  VSCODE_LOCALE_REL=''
   case "$1:$DOTFILES_OS" in
     server:*) return 0 ;;
     *:macos) VSCODE_SETTINGS_REL='Library/Application Support/Code/User/settings.json' ;;
@@ -456,8 +459,10 @@ vscode_managed_relatives() {
       ;;
   esac
   VSCODE_BACKUP_REL="$VSCODE_SETTINGS_REL.pre-dotfiles"
+  VSCODE_LOCALE_REL="${VSCODE_SETTINGS_REL%/*}/locale.json"
   validate_target_containment "$VSCODE_SETTINGS_REL"
   validate_target_containment "$VSCODE_BACKUP_REL"
+  validate_target_containment "$VSCODE_LOCALE_REL"
 }
 
 mark_vscode_paths_if_changed() {
@@ -467,6 +472,7 @@ mark_vscode_paths_if_changed() {
   [[ -n "$VSCODE_SETTINGS_REL" ]] || return 0
   mark_path_if_changed "$VSCODE_SETTINGS_REL" vscode '-'
   mark_path_if_changed "$VSCODE_BACKUP_REL" vscode_backup '-'
+  mark_path_if_changed "$VSCODE_LOCALE_REL" vscode_locale '-'
 }
 
 is_conflict_relative() {
@@ -557,6 +563,7 @@ begin_reversible_install() {
   if [[ -n "$VSCODE_SETTINGS_REL" ]]; then
     record_baseline_path "$VSCODE_SETTINGS_REL" vscode '-'
     record_baseline_path "$VSCODE_BACKUP_REL" vscode_backup '-'
+    record_baseline_path "$VSCODE_LOCALE_REL" vscode_locale '-'
   fi
   record_manifest_parent_directories
   validate_active_cycle
@@ -741,6 +748,7 @@ uninstall_dotfiles() {
     if [[ "$keep_packages" -eq 0 ]]; then
       remove_owned_upstream
       remove_cycle_packages
+      remove_fedora_vscode_repository
       remove_cycle_fonts
     fi
     restore_directory_modes_and_remove_empty
@@ -811,6 +819,31 @@ environment_set() {
 }
 
 environment_field() { awk -F '\t' -v key="$1" -v col="$2" 'NR>1 && $1==key {print $col; exit}' "$ACTIVE_CYCLE_DIR/environment.tsv"; }
+
+record_fedora_vscode_repository_before() {
+  local before=missing
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  [[ -z "$(environment_field fedora_vscode_repository 2)" ]] || return 0
+  if [[ -e "$FEDORA_VSCODE_REPO_FILE" || -L "$FEDORA_VSCODE_REPO_FILE" ]]; then
+    [[ -f "$FEDORA_VSCODE_REPO_FILE" && ! -L "$FEDORA_VSCODE_REPO_FILE" ]] ||
+      die "El fichero de repositorio de VS Code es inseguro: $FEDORA_VSCODE_REPO_FILE"
+    before="$(path_fingerprint "$FEDORA_VSCODE_REPO_FILE")"
+  fi
+  environment_set fedora_vscode_repository "$before" '-'
+}
+
+record_fedora_vscode_repository_after() {
+  local before after=missing
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  before="$(environment_field fedora_vscode_repository 2)"
+  [[ -n "$before" ]] || die 'Falta el estado previo del repositorio de VS Code.'
+  if [[ -e "$FEDORA_VSCODE_REPO_FILE" || -L "$FEDORA_VSCODE_REPO_FILE" ]]; then
+    [[ -f "$FEDORA_VSCODE_REPO_FILE" && ! -L "$FEDORA_VSCODE_REPO_FILE" ]] ||
+      die "El fichero de repositorio de VS Code es inseguro: $FEDORA_VSCODE_REPO_FILE"
+    after="$(path_fingerprint "$FEDORA_VSCODE_REPO_FILE")"
+  fi
+  environment_set fedora_vscode_repository "$before" "$after"
+}
 
 record_environment_baseline() {
   environment_set login_shell "$(current_login_shell)" '-'
@@ -920,7 +953,17 @@ validate_environment_manifest() {
   for f in environment.tsv packages.tsv upstream.tsv directories.tsv fonts.tsv; do [[ -f "$ACTIVE_CYCLE_DIR/$f" && ! -L "$ACTIVE_CYCLE_DIR/$f" ]] || die "Manifest de entorno ausente: $f"; done
   IFS= read -r header < "$ACTIVE_CYCLE_DIR/environment.tsv"; [[ "$header" == $'key\tbefore\tafter' ]] || die 'Manifest de entorno corrupto.'
   IFS= read -r header < "$ACTIVE_CYCLE_DIR/packages.tsv"; [[ "$header" == $'package\tmanager\tstate' ]] || die 'Manifest de paquetes corrupto.'
-  while IFS=$'\t' read -r key before after extra; do [[ -n "$key" && -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de entorno corrupta.'; [[ "$key" == login_shell ]] || die 'Clave de entorno desconocida.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/environment.tsv")
+  while IFS=$'\t' read -r key before after extra; do
+    [[ -n "$key" && -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de entorno corrupta.'
+    case "$key" in
+      login_shell) ;;
+      fedora_vscode_repository)
+        [[ "$before" == missing || "$before" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$ ]] || die 'Estado previo del repositorio de VS Code no válido.'
+        [[ "$after" == - || "$after" == missing || "$after" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$ ]] || die 'Estado instalado del repositorio de VS Code no válido.'
+        ;;
+      *) die 'Clave de entorno desconocida.' ;;
+    esac
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/environment.tsv")
   while IFS=$'\t' read -r package manager state extra; do [[ "$package" =~ ^[A-Za-z0-9@+._-]+$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$state" =~ ^(already_present|installed_by_cycle|not_installed|pending)$ && -z "$extra" ]] || die 'Entrada de paquete corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   while IFS=$'\t' read -r name rel existed origin commit extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$origin" == https://github.com/* && -z "$extra" ]] || die 'Entrada upstream corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   while IFS=$'\t' read -r rel existed type mode installed_mode extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$type" =~ ^(missing|directory|file|symlink|unsupported)$ && -n "$mode" && -n "$installed_mode" && -z "$extra" ]] || die 'Entrada de directorio corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/directories.tsv")
@@ -983,6 +1026,15 @@ preflight_package_removal() {
 
 array_contains() { local wanted="$1" item; shift; for item in "$@"; do [[ "$item" == "$wanted" ]] && return 0; done; return 1; }
 
+fedora_vscode_repository_is_removable() {
+  local before after
+  before="$(environment_field fedora_vscode_repository 2)"
+  after="$(environment_field fedora_vscode_repository 3)"
+  [[ "$before" == missing && "$after" == file:* ]] || return 1
+  [[ -f "$FEDORA_VSCODE_REPO_FILE" && ! -L "$FEDORA_VSCODE_REPO_FILE" ]] || return 1
+  [[ "$(path_fingerprint "$FEDORA_VSCODE_REPO_FILE")" == "$after" ]]
+}
+
 print_environment_restore_plan() {
   local keep="$1" before after current package manager state name rel existed origin commit
   printf '\nShell:\n'; before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
@@ -990,6 +1042,16 @@ print_environment_restore_plan() {
   printf '\nPaquetes instalados por este ciclo:\n'
   while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] || continue; if [[ "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$package"; else printf '  retirar %s\n' "$package"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   printf '\nPaquetes que ya existían:\n'; while IFS=$'\t' read -r package manager state; do [[ "$state" == already_present ]] && printf '  conservar %s\n' "$package"; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  if [[ -n "$(environment_field fedora_vscode_repository 2)" ]]; then
+    printf '\nRepositorio oficial de VS Code:\n'
+    if [[ "$keep" -eq 1 ]]; then
+      printf '  conservar %s\n' "$FEDORA_VSCODE_REPO_FILE"
+    elif fedora_vscode_repository_is_removable; then
+      printf '  retirar %s\n' "$FEDORA_VSCODE_REPO_FILE"
+    else
+      printf '  conservar %s (preexistente o modificado)\n' "$FEDORA_VSCODE_REPO_FILE"
+    fi
+  fi
   printf '\nUpstream:\n'; while IFS=$'\t' read -r name rel existed origin commit; do if [[ "$existed" == yes || "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$name"; elif upstream_is_pristine "$HOME/$rel" "$origin" "$commit"; then printf '  retirar %s\n' "$name"; else printf '  conservar %s (cambios posteriores)\n' "$name"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   printf '\nFuentes:\n'; if [[ "$keep" -eq 1 ]]; then printf '  conservar fuentes instaladas\n'; else printf '  retirar únicamente archivos/cask atribuibles e intactos\n'; fi
   printf '\nDirectorios:\n  retirar directorios vacíos creados por este ciclo; restaurar modes solo si no cambiaron después\n'
@@ -1024,6 +1086,14 @@ remove_cycle_packages() {
     *) die 'Gestor de paquetes desconocido en baseline.' ;;
   esac || die 'No se pudieron retirar todos los paquetes registrados; el ciclo queda activo.'
   printf '%s\tpackages-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${packages[*]}" >> "$ACTIVE_CYCLE_DIR/restore.log"
+}
+
+remove_fedora_vscode_repository() {
+  [[ -n "$(environment_field fedora_vscode_repository 2)" ]] || return 0
+  if fedora_vscode_repository_is_removable; then
+    sudo rm -- "$FEDORA_VSCODE_REPO_FILE" || die 'No se pudo retirar el repositorio de VS Code creado por el ciclo.'
+    printf '%s\tvscode-repository-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$FEDORA_VSCODE_REPO_FILE" >> "$ACTIVE_CYCLE_DIR/restore.log"
+  fi
 }
 
 remove_cycle_fonts() {

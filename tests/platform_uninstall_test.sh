@@ -42,7 +42,9 @@ prepare_common_commands() {
   local bin="$1" command_path command_name
   mkdir -p "$bin"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$bin/zsh"
+  # shellcheck disable=SC2016
   printf '%s\n' '#!/usr/bin/env bash' 'printf "forbidden chsh\n" >> "$PLATFORM_FORBIDDEN_LOG"; exit 99' > "$bin/chsh"
+  # shellcheck disable=SC2016
   printf '%s\n' '#!/usr/bin/env bash' 'printf "forbidden fc-cache\n" >> "$PLATFORM_FORBIDDEN_LOG"; exit 99' > "$bin/fc-cache"
   # Doble mínimo de Stow para crear los enlaces de la instalación fixture.
   # shellcheck disable=SC2016
