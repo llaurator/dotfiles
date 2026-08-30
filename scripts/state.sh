@@ -1106,12 +1106,24 @@ capture_package_snapshot() {
   temporary="$target.tmp.$$"
   [[ ! -e "$target" && ! -L "$target" && ! -e "$temporary" && ! -L "$temporary" ]] || die 'Ruta de snapshot de paquetes ya existente o insegura.'
   list_installed_packages > "$temporary" || { rm -f -- "$temporary"; die 'No se pudo capturar el inventario completo de paquetes.'; }
+  LC_ALL=C sort -cu "$temporary" || { rm -f -- "$temporary"; die 'El inventario de paquetes no quedó en orden canónico.'; }
   chmod 600 "$temporary"
   mv -f "$temporary" "$target"
 }
 
+package_snapshot_difference() {
+  local before="$1" after="$2" temporary status=0
+  temporary="$(mktemp -d /tmp/dotfiles-package-compare.XXXXXX)" || return 1
+  chmod 700 "$temporary" || status=1
+  if [[ "$status" -eq 0 ]] && ! LC_ALL=C sort -u "$before" > "$temporary/before.txt"; then status=1; fi
+  if [[ "$status" -eq 0 ]] && ! LC_ALL=C sort -u "$after" > "$temporary/after.txt"; then status=1; fi
+  if [[ "$status" -eq 0 ]] && ! LC_ALL=C comm -13 "$temporary/before.txt" "$temporary/after.txt"; then status=1; fi
+  rm -rf -- "$temporary" || status=1
+  return "$status"
+}
+
 run_tracked_package_transaction() {
-  local label="$1" manager transaction_id before_rel after_rel before_file after_file before_sha after_sha package status=0 count
+  local label="$1" manager transaction_id before_rel after_rel before_file after_file before_sha after_sha package difference status=0 count
   shift
   if [[ "$BASELINE_MODE" != active || "$BASELINE_FORMAT" != 2 ]]; then "$@"; return; fi
   [[ "$label" =~ ^[A-Za-z0-9@+._-]+$ ]] || die 'Etiqueta de transacción de paquetes no válida.'
@@ -1126,10 +1138,16 @@ run_tracked_package_transaction() {
   capture_package_snapshot "$before_file"
   "$@" || status=$?
   capture_package_snapshot "$after_file"
+  difference="$(mktemp /tmp/dotfiles-package-difference.XXXXXX)" || die 'No se pudo preparar la diferencia de paquetes.'
+  if ! package_snapshot_difference "$before_file" "$after_file" > "$difference"; then
+    rm -f -- "$difference"
+    die 'No se pudo comparar de forma canónica la transacción de paquetes.'
+  fi
   while IFS= read -r package; do
     [[ -n "$package" ]] || continue
     package_tracking_set "$package" "$manager" installed_by_cycle
-  done < <(comm -13 "$before_file" "$after_file")
+  done < "$difference"
+  rm -f -- "$difference"
   before_sha="$(sha256_stream < "$before_file")"
   after_sha="$(sha256_stream < "$after_file")"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$transaction_id" "$manager" "$label" "$before_rel" "$after_rel" "$before_sha" "$after_sha" >> "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
@@ -1182,7 +1200,7 @@ record_upstream_after() {
 
 validate_package_transactions() {
   local manifest="$ACTIVE_CYCLE_DIR/package-transactions.tsv" snapshots="$ACTIVE_CYCLE_DIR/package-snapshots"
-  local header transaction_id manager label before_rel after_rel before_sha after_sha extra snapshot package
+  local header transaction_id manager label before_rel after_rel before_sha after_sha extra snapshot expected_sha package difference difference_valid
   if [[ ! -e "$manifest" && ! -e "$snapshots" ]]; then return 0; fi
   [[ -f "$manifest" && ! -L "$manifest" ]] || die 'Manifest de transacciones de paquetes ausente o inseguro.'
   [[ -d "$snapshots" && ! -L "$snapshots" ]] || die 'Directorio de snapshots de paquetes ausente o inseguro.'
@@ -1193,14 +1211,25 @@ validate_package_transactions() {
     [[ "$before_rel" == "package-snapshots/$transaction_id-before.txt" && "$after_rel" == "package-snapshots/$transaction_id-after.txt" ]] || die 'Ruta de snapshot de paquetes no válida.'
     [[ "$before_sha" =~ ^[0-9a-f]{64}$ && "$after_sha" =~ ^[0-9a-f]{64}$ ]] || die 'Hash de snapshot de paquetes no válido.'
     for snapshot in "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel"; do
+      if [[ "$snapshot" == "$ACTIVE_CYCLE_DIR/$before_rel" ]]; then expected_sha="$before_sha"; else expected_sha="$after_sha"; fi
       [[ -f "$snapshot" && ! -L "$snapshot" ]] || die 'Snapshot de paquetes ausente o inseguro.'
-      cmp -s "$snapshot" <(LC_ALL=C sort -u "$snapshot") || die 'Snapshot de paquetes no ordenado o duplicado.'
+      [[ "$(sha256_stream < "$snapshot")" == "$expected_sha" ]] || die 'La integridad de un snapshot de paquetes no coincide.'
       while IFS= read -r package; do [[ "$package" =~ ^[A-Za-z0-9@+._:-]+$ ]] || die 'Nombre no válido en snapshot de paquetes.'; done < "$snapshot"
     done
-    [[ "$(sha256_stream < "$ACTIVE_CYCLE_DIR/$before_rel")" == "$before_sha" && "$(sha256_stream < "$ACTIVE_CYCLE_DIR/$after_rel")" == "$after_sha" ]] || die 'La integridad de un snapshot de paquetes no coincide.'
+    difference="$(mktemp /tmp/dotfiles-package-difference.XXXXXX)" || die 'No se pudo preparar la validación de paquetes.'
+    if ! package_snapshot_difference "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel" > "$difference"; then
+      rm -f -- "$difference"
+      die 'No se pudieron normalizar y comparar los snapshots de paquetes.'
+    fi
+    difference_valid=1
     while IFS= read -r package; do
-      awk -F '\t' -v wanted="$package" -v wanted_manager="$manager" 'NR>1 && $1==wanted && $2==wanted_manager && $3=="installed_by_cycle" {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv" || die 'Una diferencia de paquetes no quedó atribuida al ciclo.'
-    done < <(comm -13 "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel")
+      if ! awk -F '\t' -v wanted="$package" -v wanted_manager="$manager" 'NR>1 && $1==wanted && $2==wanted_manager && $3=="installed_by_cycle" {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv"; then
+        difference_valid=0
+        break
+      fi
+    done < "$difference"
+    rm -f -- "$difference"
+    [[ "$difference_valid" -eq 1 ]] || die 'Una diferencia de paquetes no quedó atribuida al ciclo.'
   done < <(sed -n '2,$p' "$manifest")
   awk -F '\t' 'NR>1 {if (seen[$1]++) exit 1}' "$manifest" || die 'Transacciones de paquetes duplicadas.'
 }

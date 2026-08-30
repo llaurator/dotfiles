@@ -105,6 +105,56 @@ for package in A B C; do
 done
 [[ ! -s "$HOME/manager.log" ]] || fail '--keep-packages ejecutó el gestor de paquetes'
 
+# Una baseline anterior puede contener snapshots íntegros ordenados con una
+# collation diferente. Se verifica primero el hash y se compara únicamente una
+# copia temporal normalizada, sin tocar la evidencia original.
+legacy_cycle="$TEST_ROOT/legacy-locale-cycle"
+mkdir -p "$legacy_cycle/package-snapshots"
+legacy_before="$legacy_cycle/package-snapshots/0001-before.txt"
+legacy_after="$legacy_cycle/package-snapshots/0001-after.txt"
+before_input="$TEST_ROOT/legacy-before-input.txt"
+after_input="$TEST_ROOT/legacy-after-input.txt"
+printf '%s\n' alpha Alpha PackageKit PackageKit-command-not-found PackageKit-Qt6 pkg-2 pkg-10 zeta-1 > "$before_input"
+printf '%s\n' alpha Alpha Beta-2 beta-10 PackageKit PackageKit-command-not-found PackageKit-Qt6 pkg-2 pkg-10 rocm-smi zeta-1 > "$after_input"
+test_locale="$(locale -a | awk 'tolower($0) ~ /^es_es\.(utf-?8|utf8)$/ {print; exit}')"
+if [[ -n "$test_locale" ]]; then
+  LC_ALL="$test_locale" sort -u "$before_input" > "$legacy_before"
+  LC_ALL="$test_locale" sort -u "$after_input" > "$legacy_after"
+else
+  # Orden deliberadamente incompatible con C para entornos sin locale español.
+  printf '%s\n' alpha Alpha PackageKit PackageKit-command-not-found PackageKit-Qt6 pkg-2 pkg-10 zeta-1 > "$legacy_before"
+  printf '%s\n' alpha Alpha Beta-2 beta-10 PackageKit PackageKit-command-not-found PackageKit-Qt6 pkg-2 pkg-10 rocm-smi zeta-1 > "$legacy_after"
+  test_locale=C
+fi
+if LC_ALL=C sort -cu "$legacy_before" >/dev/null 2>&1; then fail 'la fixture legacy quedó accidentalmente ordenada en C'; fi
+legacy_before_sha="$(sha256_stream < "$legacy_before")"
+legacy_after_sha="$(sha256_stream < "$legacy_after")"
+legacy_before_bytes="$(cksum "$legacy_before")"
+legacy_after_bytes="$(cksum "$legacy_after")"
+printf 'transaction_id\tmanager\tlabel\tbefore_snapshot\tafter_snapshot\tbefore_sha256\tafter_sha256\n' > "$legacy_cycle/package-transactions.tsv"
+printf '0001\tdnf\tlegacy-locale\tpackage-snapshots/0001-before.txt\tpackage-snapshots/0001-after.txt\t%s\t%s\n' \
+  "$legacy_before_sha" "$legacy_after_sha" >> "$legacy_cycle/package-transactions.tsv"
+printf 'package\tmanager\tstate\nBeta-2\tdnf\tinstalled_by_cycle\nbeta-10\tdnf\tinstalled_by_cycle\nrocm-smi\tdnf\tinstalled_by_cycle\n' \
+  > "$legacy_cycle/packages.tsv"
+ACTIVE_CYCLE_DIR="$legacy_cycle"
+LC_ALL="$test_locale" validate_package_transactions > "$TEST_ROOT/legacy-validation.out" 2> "$TEST_ROOT/legacy-validation.err"
+[[ ! -s "$TEST_ROOT/legacy-validation.err" ]] || fail 'la validación legacy emitió warnings de comm'
+[[ "$(cksum "$legacy_before")" == "$legacy_before_bytes" && "$(cksum "$legacy_after")" == "$legacy_after_bytes" ]] ||
+  fail 'la comparación modificó un snapshot legacy'
+[[ "$(sha256_stream < "$legacy_before")" == "$legacy_before_sha" && "$(sha256_stream < "$legacy_after")" == "$legacy_after_sha" ]] ||
+  fail 'la comparación invalidó el SHA-256 original'
+LC_ALL="$test_locale" package_snapshot_difference "$legacy_before" "$legacy_after" \
+  > "$TEST_ROOT/legacy-difference.out" 2> "$TEST_ROOT/legacy-difference.err"
+printf 'Beta-2\nbeta-10\nrocm-smi\n' > "$TEST_ROOT/legacy-expected.out"
+cmp -s "$TEST_ROOT/legacy-expected.out" "$TEST_ROOT/legacy-difference.out" || fail 'after-before no produjo el conjunto canónico correcto'
+[[ ! -s "$TEST_ROOT/legacy-difference.err" ]] || fail 'comm emitió warnings al comparar copias normalizadas'
+
+# Los snapshots nuevos son canónicos incluso si la sesión usa otra collation.
+printf '%s\n' zeta-1 pkg-2 alpha PackageKit-Qt6 pkg-10 Alpha PackageKit-command-not-found > "$HOME/installed.txt"
+canonical_snapshot="$legacy_cycle/package-snapshots/new-canonical.txt"
+LC_ALL="$test_locale" capture_package_snapshot "$canonical_snapshot"
+LC_ALL=C sort -cu "$canonical_snapshot" || fail 'un snapshot nuevo no quedó ordenado en C'
+
 # Los demás gestores soportados también exponen inventarios completos, no solo
 # la lista solicitada, usando exclusivamente dobles de prueba.
 # shellcheck disable=SC2016
