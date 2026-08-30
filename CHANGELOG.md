@@ -2,6 +2,16 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.4.0](https://github.com/llaurator/dotfiles/compare/v1.3.0...v1.4.0) (2026-08-30)
+
+### ✨ Features
+
+* **konsole:** add optional Dracula profile ([c741022](https://github.com/llaurator/dotfiles/commit/c7410229a35bbfc3076db4febc7768cad6e5b7a7))
+
+### 📚 Documentation
+
+* add terminal setup screenshot ([622faf2](https://github.com/llaurator/dotfiles/commit/622faf240c9a79a3ffa9b4049efc21ab8b7f2c09))
+
 ## [1.3.0](https://github.com/llaurator/dotfiles/compare/v1.2.0...v1.3.0) (2026-08-30)
 
 ### ✨ Features
