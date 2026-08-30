@@ -2,9 +2,9 @@
 install_system_packages() {
   local package
   get_system_packages
-  sudo dnf install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
+  run_tracked_package_transaction system-required sudo dnf install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
   for package in "${SYSTEM_OPTIONAL_PACKAGES[@]}"; do
-    if ! sudo dnf install -y "$package"; then
+    if ! run_tracked_package_transaction "optional-$package" sudo dnf install -y "$package"; then
       warn "Paquete opcional no disponible mediante dnf: $package"
     fi
   done
@@ -55,7 +55,7 @@ install_fedora_vscode() {
   fi
   sudo rpm --import "$key_tmp" || { rm -f -- "$key_tmp"; die 'No se pudo importar la clave oficial de Microsoft.'; }
   rm -f -- "$key_tmp"
-  sudo dnf install -y code
+  run_tracked_package_transaction vscode sudo dnf install -y code
 }
 # shellcheck disable=SC2034 # Consumida por scripts/state.sh después de source.
 get_system_packages() { SYSTEM_REQUIRED_PACKAGES=(git stow zsh jq); SYSTEM_OPTIONAL_PACKAGES=(fzf fd-find zoxide eza bat ripgrep btop grc direnv); SYSTEM_PACKAGES=("${SYSTEM_REQUIRED_PACKAGES[@]}" "${SYSTEM_OPTIONAL_PACKAGES[@]}"); if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]]; then SYSTEM_PACKAGES+=(code); fi; }

@@ -359,6 +359,9 @@ create_cycle() {
   printf 'relative_path\tkind\tproof\tsource\n' > "$OWNERSHIP_FILE"
   printf 'key\tbefore\tafter\n' > "$ACTIVE_CYCLE_DIR/environment.tsv"
   printf 'package\tmanager\tstate\n' > "$ACTIVE_CYCLE_DIR/packages.tsv"
+  mkdir -p "$ACTIVE_CYCLE_DIR/package-snapshots"
+  chmod 700 "$ACTIVE_CYCLE_DIR/package-snapshots"
+  printf 'transaction_id\tmanager\tlabel\tbefore_snapshot\tafter_snapshot\tbefore_sha256\tafter_sha256\n' > "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
   printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\n' > "$ACTIVE_CYCLE_DIR/upstream.tsv"
   printf 'relative_path\texisted_before\ttype\tmode\tinstalled_mode\n' > "$ACTIVE_CYCLE_DIR/directories.tsv"
   printf 'relative_path\tbefore_fingerprint\tinstalled_fingerprint\n' > "$ACTIVE_CYCLE_DIR/fonts.tsv"
@@ -896,6 +899,15 @@ record_directories_after() {
 }
 
 package_manager_name() { case "$DOTFILES_DISTRO" in arch) echo pacman;; fedora) echo dnf;; debian) echo apt;; macos) echo brew;; esac; }
+list_installed_packages() {
+  case "$DOTFILES_DISTRO" in
+    arch) pacman -Qq ;;
+    fedora) rpm -qa --qf '%{NAME}\n' ;;
+    debian) dpkg-query -W -f='${binary:Package}\t${db:Status-Abbrev}\n' | awk -F '\t' '$2 ~ /^ii / {print $1}' ;;
+    macos) { brew list --formula; brew list --cask; } ;;
+    *) die 'No se puede obtener el inventario de paquetes de esta plataforma.' ;;
+  esac | LC_ALL=C sort -u
+}
 package_is_installed() {
   case "$DOTFILES_DISTRO" in
     arch) pacman -Q -- "$1" >/dev/null 2>&1 ;;
@@ -904,14 +916,78 @@ package_is_installed() {
     macos) brew list --formula "$1" >/dev/null 2>&1 || brew list --cask "$1" >/dev/null 2>&1 ;;
   esac
 }
+
+ensure_package_transaction_storage() {
+  local old_umask
+  [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
+  old_umask="$(umask)"
+  umask 077
+  if [[ -e "$ACTIVE_CYCLE_DIR/package-transactions.tsv" || -L "$ACTIVE_CYCLE_DIR/package-transactions.tsv" ]]; then
+    [[ -f "$ACTIVE_CYCLE_DIR/package-transactions.tsv" && ! -L "$ACTIVE_CYCLE_DIR/package-transactions.tsv" ]] || die 'Manifest de transacciones de paquetes inseguro.'
+  else
+    printf 'transaction_id\tmanager\tlabel\tbefore_snapshot\tafter_snapshot\tbefore_sha256\tafter_sha256\n' > "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
+  fi
+  if [[ -e "$ACTIVE_CYCLE_DIR/package-snapshots" || -L "$ACTIVE_CYCLE_DIR/package-snapshots" ]]; then
+    [[ -d "$ACTIVE_CYCLE_DIR/package-snapshots" && ! -L "$ACTIVE_CYCLE_DIR/package-snapshots" ]] || die 'Directorio de snapshots de paquetes inseguro.'
+  else
+    mkdir "$ACTIVE_CYCLE_DIR/package-snapshots"
+  fi
+  chmod 600 "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
+  chmod 700 "$ACTIVE_CYCLE_DIR/package-snapshots"
+  umask "$old_umask"
+}
+
+package_tracking_set() {
+  local package="$1" manager="$2" state="$3" file="$ACTIVE_CYCLE_DIR/packages.tsv" tmp
+  tmp="$ACTIVE_CYCLE_DIR/.packages.$$"
+  awk -F '\t' -v wanted="$package" 'NR == 1 || $1 != wanted' "$file" > "$tmp"
+  printf '%s\t%s\t%s\n' "$package" "$manager" "$state" >> "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+capture_package_snapshot() {
+  local target="$1" temporary
+  temporary="$target.tmp.$$"
+  [[ ! -e "$target" && ! -L "$target" && ! -e "$temporary" && ! -L "$temporary" ]] || die 'Ruta de snapshot de paquetes ya existente o insegura.'
+  list_installed_packages > "$temporary" || { rm -f -- "$temporary"; die 'No se pudo capturar el inventario completo de paquetes.'; }
+  chmod 600 "$temporary"
+  mv -f "$temporary" "$target"
+}
+
+run_tracked_package_transaction() {
+  local label="$1" manager transaction_id before_rel after_rel before_file after_file before_sha after_sha package status=0 count
+  shift
+  if [[ "$BASELINE_MODE" != active || "$BASELINE_FORMAT" != 2 ]]; then "$@"; return; fi
+  [[ "$label" =~ ^[A-Za-z0-9@+._-]+$ ]] || die 'Etiqueta de transacción de paquetes no válida.'
+  ensure_package_transaction_storage
+  manager="$(package_manager_name)"
+  count="$(awk 'END {print NR-1}' "$ACTIVE_CYCLE_DIR/package-transactions.tsv")"
+  printf -v transaction_id '%04d' "$((count + 1))"
+  before_rel="package-snapshots/$transaction_id-before.txt"
+  after_rel="package-snapshots/$transaction_id-after.txt"
+  before_file="$ACTIVE_CYCLE_DIR/$before_rel"
+  after_file="$ACTIVE_CYCLE_DIR/$after_rel"
+  capture_package_snapshot "$before_file"
+  "$@" || status=$?
+  capture_package_snapshot "$after_file"
+  while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    package_tracking_set "$package" "$manager" installed_by_cycle
+  done < <(comm -13 "$before_file" "$after_file")
+  before_sha="$(sha256_stream < "$before_file")"
+  after_sha="$(sha256_stream < "$after_file")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$transaction_id" "$manager" "$label" "$before_rel" "$after_rel" "$before_sha" "$after_sha" >> "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
+  return "$status"
+}
+
 record_packages_before() {
   local package manager
   [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
-  awk 'NR>1 {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv" && return 0
   get_system_packages; manager="$(package_manager_name)"
   for package in "${SYSTEM_PACKAGES[@]}"; do
-    if package_is_installed "$package"; then printf '%s\t%s\talready_present\n' "$package" "$manager"; else printf '%s\t%s\tpending\n' "$package" "$manager"; fi
-  done >> "$ACTIVE_CYCLE_DIR/packages.tsv"
+    awk -F '\t' -v wanted="$package" 'NR>1 && $1==wanted {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv" && continue
+    if package_is_installed "$package"; then package_tracking_set "$package" "$manager" already_present; else package_tracking_set "$package" "$manager" pending; fi
+  done
 }
 record_packages_after() {
   local file="$ACTIVE_CYCLE_DIR/packages.tsv" tmp="$ACTIVE_CYCLE_DIR/.packages.$$" package manager state
@@ -948,6 +1024,31 @@ record_upstream_after() {
   done < <(sed -n '2,$p' "$file"); mv -f "$tmp" "$file"
 }
 
+validate_package_transactions() {
+  local manifest="$ACTIVE_CYCLE_DIR/package-transactions.tsv" snapshots="$ACTIVE_CYCLE_DIR/package-snapshots"
+  local header transaction_id manager label before_rel after_rel before_sha after_sha extra snapshot package
+  if [[ ! -e "$manifest" && ! -e "$snapshots" ]]; then return 0; fi
+  [[ -f "$manifest" && ! -L "$manifest" ]] || die 'Manifest de transacciones de paquetes ausente o inseguro.'
+  [[ -d "$snapshots" && ! -L "$snapshots" ]] || die 'Directorio de snapshots de paquetes ausente o inseguro.'
+  IFS= read -r header < "$manifest"
+  [[ "$header" == $'transaction_id\tmanager\tlabel\tbefore_snapshot\tafter_snapshot\tbefore_sha256\tafter_sha256' ]] || die 'Manifest de transacciones de paquetes corrupto.'
+  while IFS=$'\t' read -r transaction_id manager label before_rel after_rel before_sha after_sha extra; do
+    [[ "$transaction_id" =~ ^[0-9]{4}$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$label" =~ ^[A-Za-z0-9@+._-]+$ && -z "$extra" ]] || die 'Entrada de transacción de paquetes corrupta.'
+    [[ "$before_rel" == "package-snapshots/$transaction_id-before.txt" && "$after_rel" == "package-snapshots/$transaction_id-after.txt" ]] || die 'Ruta de snapshot de paquetes no válida.'
+    [[ "$before_sha" =~ ^[0-9a-f]{64}$ && "$after_sha" =~ ^[0-9a-f]{64}$ ]] || die 'Hash de snapshot de paquetes no válido.'
+    for snapshot in "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel"; do
+      [[ -f "$snapshot" && ! -L "$snapshot" ]] || die 'Snapshot de paquetes ausente o inseguro.'
+      cmp -s "$snapshot" <(LC_ALL=C sort -u "$snapshot") || die 'Snapshot de paquetes no ordenado o duplicado.'
+      while IFS= read -r package; do [[ "$package" =~ ^[A-Za-z0-9@+._:-]+$ ]] || die 'Nombre no válido en snapshot de paquetes.'; done < "$snapshot"
+    done
+    [[ "$(sha256_stream < "$ACTIVE_CYCLE_DIR/$before_rel")" == "$before_sha" && "$(sha256_stream < "$ACTIVE_CYCLE_DIR/$after_rel")" == "$after_sha" ]] || die 'La integridad de un snapshot de paquetes no coincide.'
+    while IFS= read -r package; do
+      awk -F '\t' -v wanted="$package" -v wanted_manager="$manager" 'NR>1 && $1==wanted && $2==wanted_manager && $3=="installed_by_cycle" {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv" || die 'Una diferencia de paquetes no quedó atribuida al ciclo.'
+    done < <(comm -13 "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel")
+  done < <(sed -n '2,$p' "$manifest")
+  awk -F '\t' 'NR>1 {if (seen[$1]++) exit 1}' "$manifest" || die 'Transacciones de paquetes duplicadas.'
+}
+
 validate_environment_manifest() {
   local f header name rel existed origin commit package manager state key before after extra type mode installed_mode
   for f in environment.tsv packages.tsv upstream.tsv directories.tsv fonts.tsv; do [[ -f "$ACTIVE_CYCLE_DIR/$f" && ! -L "$ACTIVE_CYCLE_DIR/$f" ]] || die "Manifest de entorno ausente: $f"; done
@@ -964,13 +1065,14 @@ validate_environment_manifest() {
       *) die 'Clave de entorno desconocida.' ;;
     esac
   done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/environment.tsv")
-  while IFS=$'\t' read -r package manager state extra; do [[ "$package" =~ ^[A-Za-z0-9@+._-]+$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$state" =~ ^(already_present|installed_by_cycle|not_installed|pending)$ && -z "$extra" ]] || die 'Entrada de paquete corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  while IFS=$'\t' read -r package manager state extra; do [[ "$package" =~ ^[A-Za-z0-9@+._:-]+$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$state" =~ ^(already_present|installed_by_cycle|not_installed|pending)$ && -z "$extra" ]] || die 'Entrada de paquete corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   while IFS=$'\t' read -r name rel existed origin commit extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$origin" == https://github.com/* && -z "$extra" ]] || die 'Entrada upstream corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   while IFS=$'\t' read -r rel existed type mode installed_mode extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$type" =~ ^(missing|directory|file|symlink|unsupported)$ && -n "$mode" && -n "$installed_mode" && -z "$extra" ]] || die 'Entrada de directorio corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/directories.tsv")
   while IFS=$'\t' read -r rel before after extra; do
     if [[ "$rel" == homebrew-cask:* ]]; then [[ "$rel" == homebrew-cask:font-meslo-lg-nerd-font ]]; else validate_target_containment "$rel"; [[ "$rel" == .local/share/fonts/MesloLGSNerdFont-*.ttf ]]; fi
     [[ -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de fuente corrupta.'
   done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/fonts.tsv")
+  validate_package_transactions
 }
 
 git_origin_matches() {

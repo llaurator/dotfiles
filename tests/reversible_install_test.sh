@@ -356,4 +356,26 @@ HOME="$home_u" XDG_STATE_HOME='' GIT_CONFIG_NOSYSTEM=1 \
   "$FIXTURE_REPO/install.sh" --status > "$TEST_ROOT/empty-xdg-state.out"
 [[ ! -e "$home_u/.local/state/dotfiles" ]] || fail 'status con XDG_STATE_HOME vacío modificó HOME'
 
+# --keep-packages atraviesa el flujo completo sobre una fixture temporal sin consultar ni
+# ejecutar el gestor, y conserva todos los paquetes registrados por el ciclo.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "dnf %s\n" "$*" >> "$KEEP_MANAGER_LOG"; exit 99' > "$FAKE_BIN/dnf"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "sudo %s\n" "$*" >> "$KEEP_MANAGER_LOG"; exit 99' > "$FAKE_BIN/sudo"
+chmod +x "$FAKE_BIN/dnf" "$FAKE_BIN/sudo"
+home_keep="$TEST_ROOT/home-keep-packages"
+keep_manager_log="$TEST_ROOT/keep-manager.log"
+prepare_home "$home_keep"
+KEEP_MANAGER_LOG="$keep_manager_log" run_install "$home_keep" "$home_keep/install.out" --profile server --yes
+cycle_keep="$(active_cycle_dir "$home_keep")"
+printf 'A\tdnf\tinstalled_by_cycle\nB\tdnf\tinstalled_by_cycle\nC\tdnf\tinstalled_by_cycle\n' >> "$cycle_keep/packages.tsv"
+printf 'packages remain\n' > "$home_keep/packages-remain.marker"
+: > "$keep_manager_log"
+KEEP_MANAGER_LOG="$keep_manager_log" run_install "$home_keep" "$home_keep/uninstall.out" --uninstall --keep-packages --yes
+assert_file_content "$home_keep/packages-remain.marker" 'packages remain'
+[[ ! -s "$keep_manager_log" ]] || fail '--keep-packages ejecutó un gestor real o ficticio'
+assert_contains "$home_keep/uninstall.out" 'conservar A'
+assert_contains "$home_keep/uninstall.out" 'conservar B'
+assert_contains "$home_keep/uninstall.out" 'conservar C'
+
 printf 'OK: instalación reversible, restauración y seguridad de baseline\n'

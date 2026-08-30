@@ -59,6 +59,7 @@ rm -- "$FAKE_BIN/code"
 # Dobles de Fedora: ninguna orden o repositorio real se toca.
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' \
+  'if [[ "$1" == -qa ]]; then [[ ! -e "$HOME/code-installed" ]] || printf "code\n"; exit; fi' \
   'if [[ "$1" == -q ]]; then [[ "$3" == code && -e "$HOME/code-installed" ]]; exit; fi' \
   'if [[ "$1" == --import ]]; then printf "rpm %s\n" "$*" >> "$HOME/manager.log"; exit; fi' \
   'exit 1' > "$FAKE_BIN/rpm"

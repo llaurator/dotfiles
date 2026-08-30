@@ -118,12 +118,18 @@ anteriores al sistema de baseline se reconocen como tales: solo pueden retirar e
 verificables y no prometen reconstruir un estado previo desconocido.
 
 Por defecto, una baseline de formato 2 restaura el shell solo si aún coincide con el que puso
-el ciclo y retira exclusivamente paquetes explícitos que ese ciclo introdujo. No usa
-`autoremove`; si el preflight detecta retiradas laterales no registradas, aborta. También puede
-retirar clones upstream intactos, fuentes atribuibles por huella y directorios creados que hayan
-quedado vacíos. `--keep-packages` conserva paquetes, clones upstream y fuentes, realizando solo
-el rollback de configuración, shell y directorios. Las baselines de formato 1 mantienen el
-rollback conservador antiguo y no inventan estado previo ausente.
+el ciclo. Antes y después de cada bloque o transacción del gestor guarda un snapshot ordenado
+del conjunto completo de paquetes instalados, junto con su SHA-256, y atribuye únicamente los
+nombres que aparecen en la diferencia. Esto incluye dependencias normales y débiles sin inferir
+ownership a partir del grafo actual. No usa `autoremove`; la retirada enumera explícitamente la
+diferencia registrada y, si el preflight detecta retiradas laterales no registradas, aborta.
+También puede retirar clones upstream intactos, fuentes atribuibles por huella y directorios
+creados que hayan quedado vacíos. `--keep-packages` conserva paquetes, clones upstream y fuentes,
+realizando solo el rollback de configuración, shell y directorios. Las baselines v2 anteriores
+que no contienen snapshots siguen siendo válidas, pero no se completan retrospectivamente: no
+existe evidencia suficiente para atribuir dependencias históricas ausentes de `packages.tsv`.
+Las baselines de formato 1 mantienen el rollback conservador antiguo y no inventan estado
+previo ausente.
 
 Nunca se eliminan el repositorio ni extensiones de VS Code. Tampoco se revierten
 `.bash_history`, `.zsh_history` o su backup de migración, y nunca se toca la

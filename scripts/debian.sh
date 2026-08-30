@@ -4,7 +4,7 @@ install_system_packages() {
   local available_packages=()
   get_system_packages
   sudo apt-get update
-  sudo apt-get install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
+  run_tracked_package_transaction system-required sudo apt-get install -y "${SYSTEM_REQUIRED_PACKAGES[@]}"
   for package in "${SYSTEM_OPTIONAL_PACKAGES[@]}"; do
     if apt-cache show --no-all-versions "$package" >/dev/null 2>&1; then
       available_packages+=("$package")
@@ -13,7 +13,7 @@ install_system_packages() {
     fi
   done
   if (( ${#available_packages[@]} )); then
-    sudo apt-get install -y "${available_packages[@]}"
+    run_tracked_package_transaction system-optional sudo apt-get install -y "${available_packages[@]}"
   fi
   mkdir -p "$HOME/.local/bin"
   if ! command_exists fd && command_exists fdfind; then

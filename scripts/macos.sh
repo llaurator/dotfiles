@@ -11,9 +11,9 @@ install_system_packages() {
   [[ -n "$brew_bin" ]] || die 'Homebrew no está instalado.'
   eval "$("$brew_bin" shellenv)"
   get_system_packages
-  brew install "${SYSTEM_FORMULAE[@]}"
+  run_tracked_package_transaction system-formulae brew install "${SYSTEM_FORMULAE[@]}"
   if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]] && ! command_exists code; then
-    brew install --cask visual-studio-code
+    run_tracked_package_transaction vscode-cask brew install --cask visual-studio-code
   fi
 }
 get_system_packages() { SYSTEM_FORMULAE=(git stow jq fzf fd zoxide eza bat ripgrep btop grc git-delta direnv); SYSTEM_PACKAGES=("${SYSTEM_FORMULAE[@]}"); if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]]; then SYSTEM_PACKAGES+=(visual-studio-code); fi; }
