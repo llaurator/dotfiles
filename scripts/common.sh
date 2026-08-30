@@ -9,10 +9,7 @@ install_common_components(){
   install_git_repo https://github.com/zsh-users/zsh-history-substring-search.git "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
 }
 profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
-upstream_component_status() {
-  local name="$1" destination="$2"
-  if [[ -d "$destination/.git" ]]; then printf '  ✓ %s (ya existe)\n' "$name"; else printf '  + %s\n' "$name"; fi
-}
+upstream_component_status() { local name="$1" component="$2" state; IFS=$'\t' read -r state _ < <(resolve_zsh_component "$component"); case "$state" in managed) printf '  ✓ %s (gestionado)\n' "$name";; external) printf '  ✓ %s (externo)\n' "$name";; missing) printf '  + %s (pendiente)\n' "$name";; esac; }
 print_install_preflight() {
   local profile="$1" package
   get_system_packages
@@ -24,11 +21,11 @@ print_install_preflight() {
   printf '\nSe configurará:\n  • Zsh\n  • Git\n  • dotfiles con Stow\n'
   [[ "$profile" == server ]] || printf '  • SSH cliente\n  • VS Code si está disponible\n'
   printf '\nUpstream Zsh:\n'
-  upstream_component_status 'Oh My Zsh' "$HOME/.oh-my-zsh"
-  upstream_component_status 'Powerlevel10k' "$HOME/.oh-my-zsh/custom/themes/powerlevel10k"
-  upstream_component_status 'zsh-autosuggestions' "$HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
-  upstream_component_status 'zsh-syntax-highlighting' "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
-  upstream_component_status 'zsh-history-substring-search' "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
+  upstream_component_status 'Oh My Zsh' omz
+  upstream_component_status 'Powerlevel10k' p10k
+  upstream_component_status 'zsh-autosuggestions' autosuggestions
+  upstream_component_status 'zsh-syntax-highlighting' syntax
+  upstream_component_status 'zsh-history-substring-search' history
   if (( ${#CONFLICT_RELS[@]} )); then
     printf '\nConflictos Stow:\n'
     for package in "${CONFLICT_RELS[@]}"; do printf '  ! ~/%s ya existe y no está gestionado por dotfiles\n' "$package"; done

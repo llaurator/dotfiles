@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export DOTFILES_ROOT="$ROOT_DIR"
 source "$ROOT_DIR/scripts/lib.sh"
+source "$ROOT_DIR/scripts/zsh_components.sh"
 source "$ROOT_DIR/scripts/common.sh"
 source "$ROOT_DIR/scripts/state.sh"
 
