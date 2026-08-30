@@ -37,6 +37,102 @@ select_vscode_install() {
     *) info 'VS Code no se instalará.' ;;
   esac
 }
+select_konsole_configure() {
+  local profile="$1" answer
+  REQUEST_CONFIGURE_KONSOLE=0
+  [[ "$profile" != server ]] || return 0
+  command_exists konsole || return 0
+  if [[ "$CONFIGURE_KONSOLE" -eq 1 ]]; then
+    REQUEST_CONFIGURE_KONSOLE=1
+    return 0
+  fi
+  [[ "$ASSUME_YES" -eq 0 ]] || return 0
+  if ! read -r -p '¿Quieres configurar Konsole con Dracula + MesloLGS Nerd Font? [s/N] ' answer; then
+    info 'Konsole no se configurará.'
+    return 0
+  fi
+  case "$answer" in s|S|si|SI|sí|SÍ) REQUEST_CONFIGURE_KONSOLE=1 ;; *) info 'Konsole no se configurará.' ;; esac
+}
+konsole_font_family() {
+  local font_file="$HOME/.local/share/fonts/MesloLGSNerdFont-Regular.ttf" family
+  command_exists fc-query || return 1
+  [[ -f "$font_file" && ! -L "$font_file" ]] || return 1
+  family="$(fc-query --format '%{family}\n' "$font_file" 2>/dev/null | sed -n '1p')"
+  [[ -n "$family" && "$family" != *$'\n'* && "$family" != *,* ]] || return 1
+  printf '%s' "$family"
+}
+write_konsole_default_profile() {
+  local source="$1" target="$2" temporary="$3"
+  if [[ -e "$source" || -L "$source" ]]; then
+    [[ -f "$source" && ! -L "$source" ]] || return 1
+    awk '
+      /^\[Desktop Entry\]$/ {
+        if (in_desktop && !written) print "DefaultProfile=Dotfiles.profile"
+        in_desktop=1; saw_desktop=1; print; next
+      }
+      /^\[/ {
+        if (in_desktop && !written) print "DefaultProfile=Dotfiles.profile"
+        in_desktop=0; print; next
+      }
+      {
+        if (in_desktop && $0 ~ /^DefaultProfile=/) {
+          if (!written) print "DefaultProfile=Dotfiles.profile"
+          written=1; next
+        }
+        print
+      }
+      END {
+        if (in_desktop && !written) print "DefaultProfile=Dotfiles.profile"
+        if (!saw_desktop) print "\n[Desktop Entry]\nDefaultProfile=Dotfiles.profile"
+      }
+    ' "$source" > "$temporary"
+  else
+    printf '[Desktop Entry]\nDefaultProfile=Dotfiles.profile\n' > "$temporary"
+  fi
+  chmod 600 "$temporary"
+  mv -f "$temporary" "$target"
+}
+configure_konsole() {
+  local profile="$1" scheme_dir="$HOME/.local/share/konsole" scheme="$HOME/.local/share/konsole/Dracula.colorscheme"
+  local profile_file="$scheme_dir/Dotfiles.profile" konsolerc="$HOME/.config/konsolerc" font_family downloaded install_tmp profile_tmp config_tmp
+  local source_url="${DOTFILES_KONSOLE_SOURCE_URL:-https://raw.githubusercontent.com/dracula/konsole/d525667c48b37f76aa28df8968e988ba219d4448/Dracula.colorscheme}"
+  local expected_sha256="${DOTFILES_KONSOLE_SHA256:-cd933a4c79b782afc2e91c41f6d4342313b50f115f41b7a2eaf1196e889c5e8b}"
+  [[ "$profile" != server && "$REQUEST_CONFIGURE_KONSOLE" -eq 1 ]] || return 0
+  command_exists konsole || return 0
+  font_family="$(konsole_font_family)" || { warn 'Konsole: no se pudo detectar MesloLGS Nerd Font con fontconfig; no se modifica la configuración.'; return 0; }
+  [[ ! -e "$profile_file" && ! -L "$profile_file" ]] || { warn 'Konsole: Dotfiles.profile ya existe y se conserva; no se modifica Konsole.'; return 0; }
+  if [[ -e "$scheme" || -L "$scheme" ]]; then
+    [[ -f "$scheme" && ! -L "$scheme" && "$(sha256_stream < "$scheme")" == "$expected_sha256" ]] || { warn 'Konsole: Dracula.colorscheme ya existe y se conserva; no se modifica Konsole.'; return 0; }
+  fi
+  downloaded="$(mktemp "${TMPDIR:-/tmp}/dotfiles-konsole.XXXXXX")" || { warn 'Konsole: no se pudo crear un temporal seguro.'; return 0; }
+  if ! curl -fL --proto '=https' --tlsv1.2 -o "$downloaded" "$source_url" || [[ "$(sha256_stream < "$downloaded")" != "$expected_sha256" ]]; then
+    rm -f -- "$downloaded"
+    warn 'Konsole: no se pudo descargar o verificar Dracula.colorscheme; no se modificó nada.'
+    return 0
+  fi
+  validate_target_containment '.local/share/konsole/Dracula.colorscheme'
+  validate_target_containment '.local/share/konsole/Dotfiles.profile'
+  validate_target_containment '.config/konsolerc'
+  mkdir -p "$scheme_dir" "${konsolerc%/*}"
+  if [[ ! -e "$scheme" && ! -L "$scheme" ]]; then
+    install_tmp="$(mktemp "$scheme_dir/.Dracula.colorscheme.dotfiles.XXXXXX")" || { rm -f -- "$downloaded"; die 'Konsole: no se pudo preparar la instalación atómica del esquema.'; }
+    if ! cp "$downloaded" "$install_tmp" || ! chmod 644 "$install_tmp" || ! mv -f "$install_tmp" "$scheme"; then
+      rm -f -- "$downloaded" "$install_tmp"
+      die 'Konsole: no se pudo instalar Dracula.colorscheme.'
+    fi
+  fi
+  rm -f -- "$downloaded"
+  profile_tmp="$(mktemp "$scheme_dir/.Dotfiles.profile.dotfiles.XXXXXX")" || die 'Konsole: no se pudo preparar el perfil.'
+  printf '[Appearance]\nColorScheme=Dracula\nFont=%s,10,-1,5,50,0,0,0,0,0\n\n[General]\nName=Dotfiles\n' "$font_family" > "$profile_tmp"
+  chmod 644 "$profile_tmp"
+  mv -f "$profile_tmp" "$profile_file" || { rm -f -- "$profile_tmp"; die 'Konsole: no se pudo instalar Dotfiles.profile.'; }
+  config_tmp="$(mktemp "${konsolerc%/*}/.konsolerc.dotfiles.XXXXXX")" || die 'Konsole: no se pudo preparar konsolerc.'
+  write_konsole_default_profile "$konsolerc" "$konsolerc" "$config_tmp" || { rm -f -- "$config_tmp"; die 'Konsole: no se pudo actualizar el perfil predeterminado.'; }
+  mark_path_if_changed '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+  mark_path_if_changed '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
+  mark_path_if_changed '.config/konsolerc' konsole_config '-'
+  success 'Konsole configurado con Dracula y MesloLGS Nerd Font para nuevas ventanas/sesiones.'
+}
 install_nerd_font() {
   local font_dir tmp_dir name target before fingerprint expected url downloaded
   local base_url='https://raw.githubusercontent.com/ryanoasis/nerd-fonts/v3.5.1/patched-fonts/Meslo/S'

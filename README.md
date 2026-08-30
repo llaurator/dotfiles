@@ -84,6 +84,7 @@ Non-interactive examples:
     --status            Show status without changing files
     --backup-conflicts  Explicitly back up Stow conflicts before installation
     --install-vscode    Explicitly install VS Code for personal/work where supported
+    --configure-konsole Explicitly configure Konsole for personal/work
     --dry-run           Simulate history migration or uninstall
 -h, --help              Show help
 ```
@@ -99,9 +100,10 @@ Useful commands:
 ./install.sh --migrate-bash-history --dry-run
 ./install.sh --profile personal --yes --backup-conflicts
 ./install.sh --profile work --yes --install-vscode
+./install.sh --profile work --yes --configure-konsole
 ```
 
-`--dry-run` is only valid with `--migrate-bash-history` or `--uninstall`. `--backup-conflicts` and `--install-vscode` are install-only options.
+`--dry-run` is only valid with `--migrate-bash-history` or `--uninstall`. `--backup-conflicts`, `--install-vscode`, and `--configure-konsole` are install-only options.
 
 ## What installation changes
 
@@ -130,6 +132,10 @@ Older baselines are handled conservatively: a v1 baseline can remove verifiable 
 VS Code is optional. If `code` already exists, the installer configures it without claiming ownership of its package. Explicit installation is available with `--install-vscode` for `personal` and `work` on macOS, Arch, and Fedora; Debian/Ubuntu does not add a VS Code repository automatically.
 
 The installer merges managed settings instead of blindly replacing valid local JSON, configures the Spanish locale, and installs only missing extensions: Prettier, Ruff, Python Environments, Spanish Language Pack, and Dracula Official. The managed settings select Dracula and enable the repository's formatting defaults. If local VS Code JSON is invalid, it is left unchanged.
+
+## Konsole
+
+Konsole support is optional and is considered only when its `konsole` binary is present for `personal` or `work`. The interactive installer asks before changing anything; `--yes` does not enable it. Use `--configure-konsole` for an explicit non-interactive opt-in. It installs a hash-verified Dracula colorscheme from a fixed official `dracula/konsole` commit, creates `Dotfiles.profile` with Dracula and the detected MesloLGS Nerd Font family, and safely restores the previous default profile and files during rollback.
 
 ## SSH and private data
 

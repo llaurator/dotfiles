@@ -17,6 +17,8 @@ BACKUP_CONFLICTS=0
 KEEP_PACKAGES=0
 INSTALL_VSCODE=0
 REQUEST_INSTALL_VSCODE=0
+CONFIGURE_KONSOLE=0
+REQUEST_CONFIGURE_KONSOLE=0
 
 usage() {
     cat <<'HELP'
@@ -26,6 +28,7 @@ Uso:
   ./install.sh --profile work --yes
   ./install.sh --profile server --yes
   ./install.sh --profile server --yes --backup-conflicts
+  ./install.sh --profile work --yes --configure-konsole
   ./install.sh --uninstall
   ./install.sh --uninstall --dry-run
   ./install.sh --uninstall --keep-packages
@@ -43,6 +46,7 @@ Opciones:
       --status            Mostrar el estado sin modificar archivos
       --backup-conflicts  Respaldar conflictos explícitamente antes de instalar
       --install-vscode    Instalar VS Code explícitamente en personal/work
+      --configure-konsole Configurar Konsole explícitamente en personal/work
       --dry-run           Simular migración o desinstalación sin modificar archivos
   -h, --help              Mostrar ayuda
 HELP
@@ -58,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --status) SHOW_STATUS=1; shift ;;
         --backup-conflicts) BACKUP_CONFLICTS=1; shift ;;
         --install-vscode) INSTALL_VSCODE=1; shift ;;
+        --configure-konsole) CONFIGURE_KONSOLE=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "Opción desconocida: $1" ;;
@@ -80,6 +85,9 @@ if [[ "$KEEP_PACKAGES" -eq 1 && "$UNINSTALL" -ne 1 ]]; then
 fi
 if [[ "$INSTALL_VSCODE" -eq 1 ]] && (( explicit_actions > 0 )); then
     die '--install-vscode solo puede usarse al instalar.'
+fi
+if [[ "$CONFIGURE_KONSOLE" -eq 1 ]] && (( explicit_actions > 0 )); then
+    die '--configure-konsole solo puede usarse al instalar.'
 fi
 
 print_banner
@@ -119,6 +127,9 @@ validate_profile "$PROFILE"
 if [[ "$PROFILE" == server && "$INSTALL_VSCODE" -eq 1 ]]; then
     die '--install-vscode no puede usarse con el perfil server.'
 fi
+if [[ "$PROFILE" == server && "$CONFIGURE_KONSOLE" -eq 1 ]]; then
+    die '--configure-konsole no puede usarse con el perfil server.'
+fi
 
 printf '\n'
 info "Sistema detectado"
@@ -139,6 +150,7 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
 fi
 
 select_vscode_install "$PROFILE"
+select_konsole_configure "$PROFILE"
 
 plan_reversible_install "$PROFILE"
 begin_reversible_install "$PROFILE"
@@ -170,6 +182,7 @@ configure_git_identity
 mark_path_if_changed '.config/git/local.gitconfig' git '-'
 configure_vscode "$PROFILE"
 mark_vscode_paths_if_changed "$PROFILE"
+configure_konsole "$PROFILE"
 record_directories_after
 ensure_zsh_shell
 

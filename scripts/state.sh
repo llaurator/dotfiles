@@ -255,7 +255,7 @@ validate_manifest() {
        -n "$kind" && -n "$source" && -n "$backup_fingerprint" && -z "$extra" ]] || die 'Entrada de manifest corrupta.'
     validate_target_containment "$relative"
     case "$original_type" in missing|file|directory|symlink) ;; *) die 'Tipo original no válido en manifest.' ;; esac
-    case "$kind" in stow|profile|git|vscode|vscode_backup|vscode_locale) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
+    case "$kind" in stow|profile|git|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
     if [[ "$kind" == stow ]]; then
       validate_relative_path "$source" || die 'Source Stow no válido en manifest.'
       package="${source%%/*}"
@@ -270,6 +270,9 @@ validate_manifest() {
         vscode) [[ "$relative" == 'Code/User/settings.json' || "$relative" == */Code/User/settings.json ]] || die 'Ruta de VS Code no válida.' ;;
         vscode_backup) [[ "$relative" == 'Code/User/settings.json.pre-dotfiles' || "$relative" == */Code/User/settings.json.pre-dotfiles ]] || die 'Ruta de backup de VS Code no válida.' ;;
         vscode_locale) [[ "$relative" == 'Code/User/locale.json' || "$relative" == */Code/User/locale.json ]] || die 'Ruta de locale de VS Code no válida.' ;;
+        konsole_colorscheme) [[ "$relative" == '.local/share/konsole/Dracula.colorscheme' ]] || die 'Ruta de esquema Konsole no válida.' ;;
+        konsole_profile) [[ "$relative" == '.local/share/konsole/Dotfiles.profile' ]] || die 'Ruta de perfil Konsole no válida.' ;;
+        konsole_config) [[ "$relative" == '.config/konsolerc' ]] || die 'Ruta de configuración Konsole no válida.' ;;
       esac
     fi
     if [[ "$original_type" == missing ]]; then
@@ -307,7 +310,7 @@ validate_ownership() {
         [[ "$proof" == pending || "$proof" =~ ^symlink:[0-9a-f]{64}:[0-9]+$ ]] || die 'Prueba Stow no válida.'
         validate_relative_path "$source" || die 'Source Stow no válido.'
         ;;
-      profile|git|vscode|vscode_backup|vscode_locale)
+      profile|git|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config)
         [[ "$source" == '-' && "$proof" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$|^symlink:[0-9a-f]{64}:[0-9]+$|^directory:[0-9a-f]{64}:[0-7]{3,4}$ ]] ||
           die 'Prueba de propiedad no válida.'
         ;;
@@ -646,6 +649,11 @@ begin_reversible_install() {
     record_baseline_path "$VSCODE_BACKUP_REL" vscode_backup '-'
     record_baseline_path "$VSCODE_LOCALE_REL" vscode_locale '-'
   fi
+  if [[ "${REQUEST_CONFIGURE_KONSOLE:-0}" -eq 1 ]]; then
+    record_baseline_path '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+    record_baseline_path '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
+    record_baseline_path '.config/konsolerc' konsole_config '-'
+  fi
   record_manifest_parent_directories
   validate_active_cycle
 }
@@ -949,6 +957,9 @@ show_dotfiles_status() {
   if [[ -n "$(git config --get user.name 2>/dev/null || true)" && -n "$(git config --get user.email 2>/dev/null || true)" ]]; then success 'Identidad Git configurada'; else printf '  - Identidad Git incompleta\n'; fi
   if [[ -d "$HOME/.ssh/config.d" ]] && compgen -G "$HOME/.ssh/config.d/*.conf" >/dev/null; then hosts='configurados'; fi
   printf '  SSH local hosts: %s\n' "$hosts"
+  if [[ -f "$HOME/.local/share/konsole/Dracula.colorscheme" && -f "$HOME/.local/share/konsole/Dotfiles.profile" ]]; then
+    printf '  Konsole: ✓ Dracula / Dotfiles.profile\n'
+  fi
   printf '\nTools:\n'
   for package in zsh stow fzf zoxide eza bat rg btop grc direnv; do if command_exists "$package"; then printf '  ✓ %s\n' "$package"; else printf '  - %s\n' "$package"; fi; done
 }
