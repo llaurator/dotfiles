@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+DOTFILES_OS=''
+DOTFILES_DISTRO=''
+DOTFILES_ARCH=''
+DOTFILES_HOST=''
+
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[0;33m'; CYAN=$'\033[0;36m'; MAGENTA=$'\033[0;35m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
 info(){ printf '%sℹ%s  %s\n' "$CYAN" "$RESET" "$*"; }
 success(){ printf '%s✓%s  %s\n' "$GREEN" "$RESET" "$*"; }

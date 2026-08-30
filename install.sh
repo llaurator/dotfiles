@@ -90,7 +90,11 @@ fi
 case "$ACTION" in
   exit) info 'Hasta la próxima.'; exit 0 ;;
   status) show_dotfiles_status; exit 0 ;;
-  uninstall) uninstall_dotfiles "$DRY_RUN" "$KEEP_PACKAGES"; exit 0 ;;
+  uninstall)
+    detect_platform
+    uninstall_dotfiles "$DRY_RUN" "$KEEP_PACKAGES"
+    exit 0
+    ;;
   migrate)
     source "$ROOT_DIR/scripts/history.sh"
     migrate_bash_history "$DRY_RUN"
