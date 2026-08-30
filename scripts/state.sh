@@ -359,6 +359,7 @@ create_cycle() {
   printf 'package\tmanager\tstate\n' > "$ACTIVE_CYCLE_DIR/packages.tsv"
   printf 'name\trelative_path\texisted_before\texpected_origin\tinstalled_commit\n' > "$ACTIVE_CYCLE_DIR/upstream.tsv"
   printf 'relative_path\texisted_before\ttype\tmode\tinstalled_mode\n' > "$ACTIVE_CYCLE_DIR/directories.tsv"
+  printf 'relative_path\tbefore_fingerprint\tinstalled_fingerprint\n' > "$ACTIVE_CYCLE_DIR/fonts.tsv"
   printf 'active\n' > "$ACTIVE_CYCLE_DIR/status"
   temporary_active="$STATE_ROOT/.active.$$"
   printf '%s\n' "$ACTIVE_CYCLE" > "$temporary_active"
@@ -740,6 +741,7 @@ uninstall_dotfiles() {
     if [[ "$keep_packages" -eq 0 ]]; then
       remove_owned_upstream
       remove_cycle_packages
+      remove_cycle_fonts
     fi
     restore_directory_modes_and_remove_empty
   fi
@@ -822,7 +824,7 @@ record_shell_changed() {
 
 record_relevant_directories() {
   local rel target existed type mode
-  local -a dirs=(.config .config/zsh .config/dotfiles .config/dotfiles/vscode .config/btop .config/Code .config/Code/User .ssh .ssh/config.d .local .local/share)
+  local -a dirs=(.config .config/zsh .config/dotfiles .config/dotfiles/vscode .config/btop .config/Code .config/Code/User .ssh .ssh/config.d .local .local/share .local/share/fonts)
   for rel in "${dirs[@]}"; do
     target="$HOME/$rel"; existed=no; type=missing; mode=-
     if [[ -e "$target" || -L "$target" ]]; then existed=yes; type="$(path_type "$target")"; [[ "$type" == directory ]] && mode="$(path_mode "$target")"; fi
@@ -915,13 +917,17 @@ record_upstream_after() {
 
 validate_environment_manifest() {
   local f header name rel existed origin commit package manager state key before after extra type mode installed_mode
-  for f in environment.tsv packages.tsv upstream.tsv directories.tsv; do [[ -f "$ACTIVE_CYCLE_DIR/$f" && ! -L "$ACTIVE_CYCLE_DIR/$f" ]] || die "Manifest de entorno ausente: $f"; done
+  for f in environment.tsv packages.tsv upstream.tsv directories.tsv fonts.tsv; do [[ -f "$ACTIVE_CYCLE_DIR/$f" && ! -L "$ACTIVE_CYCLE_DIR/$f" ]] || die "Manifest de entorno ausente: $f"; done
   IFS= read -r header < "$ACTIVE_CYCLE_DIR/environment.tsv"; [[ "$header" == $'key\tbefore\tafter' ]] || die 'Manifest de entorno corrupto.'
   IFS= read -r header < "$ACTIVE_CYCLE_DIR/packages.tsv"; [[ "$header" == $'package\tmanager\tstate' ]] || die 'Manifest de paquetes corrupto.'
   while IFS=$'\t' read -r key before after extra; do [[ -n "$key" && -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de entorno corrupta.'; [[ "$key" == login_shell ]] || die 'Clave de entorno desconocida.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/environment.tsv")
   while IFS=$'\t' read -r package manager state extra; do [[ "$package" =~ ^[A-Za-z0-9@+._-]+$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$state" =~ ^(already_present|installed_by_cycle|not_installed|pending)$ && -z "$extra" ]] || die 'Entrada de paquete corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   while IFS=$'\t' read -r name rel existed origin commit extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$origin" == https://github.com/* && -z "$extra" ]] || die 'Entrada upstream corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   while IFS=$'\t' read -r rel existed type mode installed_mode extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$type" =~ ^(missing|directory|file|symlink|unsupported)$ && -n "$mode" && -n "$installed_mode" && -z "$extra" ]] || die 'Entrada de directorio corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/directories.tsv")
+  while IFS=$'\t' read -r rel before after extra; do
+    if [[ "$rel" == homebrew-cask:* ]]; then [[ "$rel" == homebrew-cask:font-meslo-lg-nerd-font ]]; else validate_target_containment "$rel"; [[ "$rel" == .local/share/fonts/MesloLGSNerdFont-*.ttf ]]; fi
+    [[ -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de fuente corrupta.'
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/fonts.tsv")
 }
 
 git_origin_matches() {
@@ -985,6 +991,7 @@ print_environment_restore_plan() {
   while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] || continue; if [[ "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$package"; else printf '  retirar %s\n' "$package"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   printf '\nPaquetes que ya existían:\n'; while IFS=$'\t' read -r package manager state; do [[ "$state" == already_present ]] && printf '  conservar %s\n' "$package"; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   printf '\nUpstream:\n'; while IFS=$'\t' read -r name rel existed origin commit; do if [[ "$existed" == yes || "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$name"; elif upstream_is_pristine "$HOME/$rel" "$origin" "$commit"; then printf '  retirar %s\n' "$name"; else printf '  conservar %s (cambios posteriores)\n' "$name"; fi; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
+  printf '\nFuentes:\n'; if [[ "$keep" -eq 1 ]]; then printf '  conservar fuentes instaladas\n'; else printf '  retirar únicamente archivos/cask atribuibles e intactos\n'; fi
   printf '\nDirectorios:\n  retirar directorios vacíos creados por este ciclo; restaurar modes solo si no cambiaron después\n'
   printf '\nHistoriales:\n  conservar .bash_history, .zsh_history y .zsh_history.pre-bash-migration\nRepo:\n  conservar %s\n' "$DOTFILES_ROOT"
 }
@@ -1017,6 +1024,19 @@ remove_cycle_packages() {
     *) die 'Gestor de paquetes desconocido en baseline.' ;;
   esac || die 'No se pudieron retirar todos los paquetes registrados; el ciclo queda activo.'
   printf '%s\tpackages-removed\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "${packages[*]}" >> "$ACTIVE_CYCLE_DIR/restore.log"
+}
+
+remove_cycle_fonts() {
+  local rel before installed target
+  while IFS=$'\t' read -r rel before installed; do
+    if [[ "$rel" == homebrew-cask:* ]]; then
+      if [[ "$before" == missing && "$installed" == installed_by_cycle ]]; then brew uninstall --cask "${rel#*:}" || die 'No se pudo retirar la fuente Homebrew.'; fi
+      continue
+    fi
+    validate_target_containment "$rel"; target="$HOME/$rel"
+    if [[ "$before" == missing && -f "$target" && "$(path_fingerprint "$target")" == "$installed" ]]; then rm -- "$target"; fi
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/fonts.tsv")
+  if command_exists fc-cache; then fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1 || warn 'No se pudo actualizar la caché de fuentes.'; fi
 }
 
 restore_directory_modes_and_remove_empty() {

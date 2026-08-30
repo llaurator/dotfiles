@@ -56,7 +56,7 @@ run_install() {
   (
     cd "$home"
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
-      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh STOW_TEST_LOG="$STOW_LOG" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
       GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
       "$FIXTURE_REPO/install.sh" "$@"
   ) > "$output" 2>&1
@@ -68,7 +68,7 @@ run_install_with_input() {
   printf '%b' "$input" | (
     cd "$home"
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
-      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh STOW_TEST_LOG="$STOW_LOG" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
       GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
       "$FIXTURE_REPO/install.sh" "$@"
   ) > "$output" 2>&1

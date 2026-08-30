@@ -8,6 +8,41 @@ install_common_components(){
   install_git_repo https://github.com/zsh-users/zsh-syntax-highlighting.git "$HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
   install_git_repo https://github.com/zsh-users/zsh-history-substring-search.git "$HOME/.oh-my-zsh/custom/plugins/zsh-history-substring-search"
 }
+profile_uses_nerd_font() { [[ "$1" == personal || "$1" == work ]]; }
+install_nerd_font() {
+  local font_dir archive tmp_dir name target before fingerprint
+  [[ "${DOTFILES_SKIP_FONT:-0}" != 1 ]] || { info 'Fuente omitida por el entorno de pruebas.'; return 0; }
+  if [[ "$DOTFILES_OS" == macos ]]; then
+    if brew list --cask font-meslo-lg-nerd-font >/dev/null 2>&1; then
+      [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -q '^homebrew-cask:' "$ACTIVE_CYCLE_DIR/fonts.tsv" && printf 'homebrew-cask:font-meslo-lg-nerd-font\talready_present\t-\n' >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+      success 'MesloLGS Nerd Font ya instalada.'; return
+    fi
+    brew install --cask font-meslo-lg-nerd-font
+    [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf 'homebrew-cask:font-meslo-lg-nerd-font\tmissing\tinstalled_by_cycle\n' >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+  else
+    command_exists curl || { warn 'No se encontró curl; no se pudo instalar MesloLGS Nerd Font.'; return; }
+    command_exists unzip || { warn 'No se encontró unzip; no se pudo instalar MesloLGS Nerd Font.'; return; }
+    font_dir="$HOME/.local/share/fonts"; mkdir -p "$font_dir"
+    tmp_dir="$(mktemp -d)" || return 1; archive="$tmp_dir/Meslo.zip"
+    if ! curl -fL --proto '=https' --tlsv1.2 -o "$archive" 'https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/Meslo.zip' || ! unzip -tq "$archive" >/dev/null; then rm -rf -- "$tmp_dir"; warn 'No se pudo descargar o validar MesloLGS Nerd Font.'; return 0; fi
+    for name in Regular Bold Italic BoldItalic; do
+      target="$font_dir/MesloLGSNerdFont-$name.ttf"; before=missing; [[ -e "$target" ]] && before="$(path_fingerprint "$target")"
+      if [[ "$before" == missing ]]; then
+        unzip -jp "$archive" "MesloLGSNerdFont-$name.ttf" > "$tmp_dir/$name.ttf"
+        [[ -s "$tmp_dir/$name.ttf" ]] || { rm -rf -- "$tmp_dir"; warn 'El archivo de fuente esperado no estaba en el release.'; return 0; }
+        chmod 644 "$tmp_dir/$name.ttf"; mv "$tmp_dir/$name.ttf" "$target"
+        fingerprint="$(path_fingerprint "$target")"
+        [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf '%s\tmissing\t%s\n' ".local/share/fonts/${target##*/}" "$fingerprint" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+      elif [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -Fq ".local/share/fonts/${target##*/}" "$ACTIVE_CYCLE_DIR/fonts.tsv"; then
+        printf '%s\t%s\t%s\n' ".local/share/fonts/${target##*/}" "$before" "$before" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+      fi
+    done
+    rm -rf -- "$tmp_dir"
+    if command_exists fc-cache; then fc-cache -f "$font_dir" >/dev/null 2>&1 || warn 'fontconfig no pudo actualizar la caché de usuario.'; else warn 'fontconfig no está disponible; actualiza la caché de fuentes manualmente.'; fi
+  fi
+  success 'MesloLGS Nerd Font instalada.'
+  info 'Si los iconos no se muestran correctamente, selecciona "MesloLGS NF" como fuente en tu emulador de terminal.'
+}
 write_profile(){ mkdir -p "$HOME/.config/dotfiles"; printf '%s\n' "$1" > "$HOME/.config/dotfiles/profile"; success 'Perfil guardado en ~/.config/dotfiles/profile'; }
 stow_packages_for_profile() {
   local profile="$1"

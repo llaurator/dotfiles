@@ -37,7 +37,7 @@ Opciones:
       --migrate-bash-history
                           Importar de forma segura ~/.bash_history en ~/.zsh_history
       --uninstall         Retirar dotfiles y restaurar la baseline disponible
-      --keep-packages     Con --uninstall, conservar paquetes y upstream
+      --keep-packages     Con --uninstall, conservar paquetes, upstream y fuentes
       --status            Mostrar el estado sin modificar archivos
       --backup-conflicts  Respaldar conflictos explícitamente antes de instalar
       --dry-run           Simular migración o desinstalación sin modificar archivos
@@ -146,6 +146,7 @@ record_packages_after
 record_upstream_before
 install_common_components
 record_upstream_after
+if profile_uses_nerd_font "$PROFILE"; then install_nerd_font; fi
 write_profile "$PROFILE"
 mark_path_if_changed '.config/dotfiles/profile' profile '-'
 deploy_stow_packages "$PROFILE"
