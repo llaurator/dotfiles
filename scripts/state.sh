@@ -1145,6 +1145,30 @@ package_snapshot_difference() {
   return "$status"
 }
 
+package_transaction_complete() {
+  local before_rel="$1" after_rel="$2" before_sha="$3" after_sha="$4" before_file after_file
+  before_file="$ACTIVE_CYCLE_DIR/$before_rel"; after_file="$ACTIVE_CYCLE_DIR/$after_rel"
+  [[ "$before_sha" =~ ^[0-9a-f]{64}$ && "$after_sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  [[ -f "$before_file" && ! -L "$before_file" && -f "$after_file" && ! -L "$after_file" ]] || return 1
+  [[ "$(sha256_stream < "$before_file")" == "$before_sha" && "$(sha256_stream < "$after_file")" == "$after_sha" ]]
+}
+
+pending_package_is_attributable() {
+  local wanted="$1" wanted_manager="$2" transaction_id manager label before_rel after_rel before_sha after_sha package
+  [[ -f "$ACTIVE_CYCLE_DIR/package-transactions.tsv" && ! -L "$ACTIVE_CYCLE_DIR/package-transactions.tsv" ]] || return 1
+  while IFS=$'\t' read -r transaction_id manager label before_rel after_rel before_sha after_sha; do
+    [[ "$manager" == "$wanted_manager" ]] || continue
+    package_transaction_complete "$before_rel" "$after_rel" "$before_sha" "$after_sha" || continue
+    while IFS= read -r package; do [[ "$package" == "$wanted" ]] && return 0; done < <(package_snapshot_difference "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel")
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/package-transactions.tsv")
+  return 1
+}
+
+package_is_cycle_owned() {
+  local package="$1" manager="$2" state="$3"
+  [[ "$state" == installed_by_cycle ]] || { [[ "$state" == pending ]] && pending_package_is_attributable "$package" "$manager"; }
+}
+
 run_tracked_package_transaction() {
   local label="$1" manager transaction_id before_rel after_rel before_file after_file before_sha after_sha package difference status=0 count
   shift
@@ -1191,7 +1215,11 @@ record_packages_after() {
   [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] || return 0
   printf 'package\tmanager\tstate\n' > "$tmp"
   while IFS=$'\t' read -r package manager state; do
-    [[ "$state" == pending ]] && { if package_is_installed "$package"; then state=installed_by_cycle; else state=not_installed; fi; }
+    if [[ "$state" == pending ]]; then
+      if pending_package_is_attributable "$package" "$manager"; then state=installed_by_cycle
+      elif ! package_is_installed "$package"; then state=not_installed
+      fi
+    fi
     printf '%s\t%s\t%s\n' "$package" "$manager" "$state" >> "$tmp"
   done < <(sed -n '2,$p' "$file")
   mv -f "$tmp" "$file"
@@ -1240,7 +1268,20 @@ validate_package_transactions() {
   while IFS=$'\t' read -r transaction_id manager label before_rel after_rel before_sha after_sha extra; do
     [[ "$transaction_id" =~ ^[0-9]{4}$ && "$manager" =~ ^(apt|dnf|pacman|brew)$ && "$label" =~ ^[A-Za-z0-9@+._-]+$ && -z "$extra" ]] || die 'Entrada de transacción de paquetes corrupta.'
     [[ "$before_rel" == "package-snapshots/$transaction_id-before.txt" && "$after_rel" == "package-snapshots/$transaction_id-after.txt" ]] || die 'Ruta de snapshot de paquetes no válida.'
-    [[ "$before_sha" =~ ^[0-9a-f]{64}$ && "$after_sha" =~ ^[0-9a-f]{64}$ ]] || die 'Hash de snapshot de paquetes no válido.'
+    [[ "$before_sha" == - || "$before_sha" =~ ^[0-9a-f]{64}$ ]] || die 'Hash de snapshot de paquetes no válido.'
+    [[ "$after_sha" == - || "$after_sha" =~ ^[0-9a-f]{64}$ ]] || die 'Hash de snapshot de paquetes no válido.'
+    for snapshot in "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel"; do
+      [[ ! -e "$snapshot" && ! -L "$snapshot" ]] || [[ -f "$snapshot" && ! -L "$snapshot" ]] || die 'Snapshot de paquetes ausente o inseguro.'
+    done
+    if ! package_transaction_complete "$before_rel" "$after_rel" "$before_sha" "$after_sha"; then
+      if [[ -e "$ACTIVE_CYCLE_DIR/$before_rel" || -L "$ACTIVE_CYCLE_DIR/$before_rel" || -e "$ACTIVE_CYCLE_DIR/$after_rel" || -L "$ACTIVE_CYCLE_DIR/$after_rel" ]]; then
+        if [[ "$before_sha" =~ ^[0-9a-f]{64}$ && -f "$ACTIVE_CYCLE_DIR/$before_rel" && ! -L "$ACTIVE_CYCLE_DIR/$before_rel" && "$(sha256_stream < "$ACTIVE_CYCLE_DIR/$before_rel")" != "$before_sha" ]] ||
+           [[ "$after_sha" =~ ^[0-9a-f]{64}$ && -f "$ACTIVE_CYCLE_DIR/$after_rel" && ! -L "$ACTIVE_CYCLE_DIR/$after_rel" && "$(sha256_stream < "$ACTIVE_CYCLE_DIR/$after_rel")" != "$after_sha" ]]; then
+          die 'La integridad de un snapshot de paquetes no coincide.'
+        fi
+      fi
+      continue
+    fi
     for snapshot in "$ACTIVE_CYCLE_DIR/$before_rel" "$ACTIVE_CYCLE_DIR/$after_rel"; do
       if [[ "$snapshot" == "$ACTIVE_CYCLE_DIR/$before_rel" ]]; then expected_sha="$before_sha"; else expected_sha="$after_sha"; fi
       [[ -f "$snapshot" && ! -L "$snapshot" ]] || die 'Snapshot de paquetes ausente o inseguro.'
@@ -1254,7 +1295,7 @@ validate_package_transactions() {
     fi
     difference_valid=1
     while IFS= read -r package; do
-      if ! awk -F '\t' -v wanted="$package" -v wanted_manager="$manager" 'NR>1 && $1==wanted && $2==wanted_manager && $3=="installed_by_cycle" {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv"; then
+      if ! awk -F '\t' -v wanted="$package" -v wanted_manager="$manager" 'NR>1 && $1==wanted && $2==wanted_manager && ($3=="installed_by_cycle" || $3=="pending") {found=1} END {exit !found}' "$ACTIVE_CYCLE_DIR/packages.tsv"; then
         difference_valid=0
         break
       fi
@@ -1321,7 +1362,7 @@ preflight_environment_restore() {
       if [[ -e "$HOME/$rel" ]] && ! upstream_is_pristine "$HOME/$rel" "$origin" "$commit"; then warn "$name contiene cambios o datos posteriores; se conservará."; fi
     done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
     while IFS=$'\t' read -r package manager state; do
-      case "$state" in already_present|installed_by_cycle|not_installed) ;; *) die 'Estado de paquete no válido en baseline.';; esac
+      case "$state" in already_present|installed_by_cycle|not_installed|pending) ;; *) die 'Estado de paquete no válido en baseline.';; esac
     done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
     preflight_package_removal
   fi
@@ -1331,9 +1372,15 @@ preflight_package_removal() {
   local package manager state output line candidate checkpoint; local -a packages=() extras=()
   checkpoint="$(restore_checkpoint_state packages_remove system packages-removed '*')"
   [[ "$checkpoint" != completed ]] || return 0
-  while IFS=$'\t' read -r package manager state; do [[ "$state" == installed_by_cycle ]] && package_is_installed "$package" && packages+=("$package"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  manager=''
+  while IFS=$'\t' read -r package recorded_manager state; do
+    package_is_cycle_owned "$package" "$recorded_manager" "$state" || continue
+    package_is_installed "$package" || continue
+    [[ -z "$manager" || "$manager" == "$recorded_manager" ]] || die 'La baseline mezcla gestores de paquetes atribuibles.'
+    manager="$recorded_manager"
+    packages+=("$package")
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   (( ${#packages[@]} )) || return 0
-  manager="$(awk -F '\t' '$3=="installed_by_cycle" {print $2; exit}' "$ACTIVE_CYCLE_DIR/packages.tsv")"
   case "$manager" in
     apt)
       output="$(LC_ALL=C apt-get -s remove "${packages[@]}")" || die 'No se pudo simular la retirada de paquetes.'
@@ -1378,7 +1425,7 @@ print_environment_restore_plan() {
   printf '\nPaquetes instalados por este ciclo:\n'
   checkpoint="$(restore_checkpoint_state packages_remove system packages-removed '*')"
   while IFS=$'\t' read -r package manager state; do
-    [[ "$state" == installed_by_cycle ]] || continue
+    package_is_cycle_owned "$package" "$manager" "$state" || continue
     if [[ "$keep" -eq 1 ]]; then printf '  conservar %s\n' "$package"
     elif [[ "$checkpoint" == completed ]]; then printf '  hecho: %s\n' "$package"
     elif package_is_installed "$package"; then printf '  retirar %s\n' "$package"
@@ -1458,7 +1505,13 @@ remove_cycle_packages() {
   local manager='' package state recorded_manager checkpoint shell_before shell_after shell_current; local -a packages=()
   checkpoint="$(restore_checkpoint_state packages_remove system packages-removed '*')"
   [[ "$checkpoint" != completed ]] || return 0
-  while IFS=$'\t' read -r package recorded_manager state; do [[ "$state" == installed_by_cycle ]] || continue; package_is_installed "$package" || continue; manager="$recorded_manager"; packages+=("$package"); done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
+  while IFS=$'\t' read -r package recorded_manager state; do
+    package_is_cycle_owned "$package" "$recorded_manager" "$state" || continue
+    package_is_installed "$package" || continue
+    [[ -z "$manager" || "$manager" == "$recorded_manager" ]] || die 'La baseline mezcla gestores de paquetes atribuibles.'
+    manager="$recorded_manager"
+    packages+=("$package")
+  done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/packages.tsv")
   if (( ${#packages[@]} == 0 )); then
     if [[ "$checkpoint" == started ]]; then restore_checkpoint_set packages_remove system completed; fi
     return 0

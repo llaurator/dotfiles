@@ -41,6 +41,7 @@ printf '%s\n' '#!/usr/bin/env bash' '[[ "${1:-}" == -v ]] && exit 0' 'exec "$@"'
 chmod +x "$FAKE_BIN/rpm" "$FAKE_BIN/dnf" "$FAKE_BIN/sudo"
 
 get_system_packages() { SYSTEM_PACKAGES=(A B C); }
+current_login_shell() { printf '%s\n' /bin/bash; }
 
 reset_cycle() {
   rm -rf -- "$ACTIVE_CYCLE_DIR/package-snapshots"
@@ -90,6 +91,77 @@ remove_cycle_packages
 assert_line "$HOME/installed.txt" B
 assert_line "$HOME/installed.txt" C
 if grep -Fxq A "$HOME/installed.txt"; then fail 'rollback conservó A introducido por el ciclo'; fi
+
+# Si el gestor falla antes de instalar nada, los snapshots completos e iguales
+# conservan pending como estado recuperable, sin atribuir paquetes al ciclo.
+reset_cycle
+printf 'base\n' > "$HOME/installed.txt"
+record_packages_before
+if run_tracked_package_transaction interrupted false; then fail 'un fallo del gestor devolvió éxito'; fi
+validate_package_transactions
+assert_line "$ACTIVE_CYCLE_DIR/packages.tsv" $'A\tdnf\tpending'
+assert_line "$ACTIVE_CYCLE_DIR/packages.tsv" $'B\tdnf\tpending'
+assert_line "$ACTIVE_CYCLE_DIR/packages.tsv" $'C\tdnf\tpending'
+before_sha="$(awk -F '\t' 'NR == 2 {print $6}' "$ACTIVE_CYCLE_DIR/package-transactions.tsv")"
+after_sha="$(awk -F '\t' 'NR == 2 {print $7}' "$ACTIVE_CYCLE_DIR/package-transactions.tsv")"
+[[ "$before_sha" == "$after_sha" ]] || fail 'una transacción sin cambios no conservó snapshots idénticos'
+preflight_environment_restore 0
+print_environment_restore_plan 0 > "$TEST_ROOT/interrupted-plan.out"
+if grep -Fq 'retirar A' "$TEST_ROOT/interrupted-plan.out"; then fail 'dry-run atribuyó un pending sin diferencia verificable'; fi
+remove_cycle_packages
+assert_line "$HOME/installed.txt" base
+[[ ! -s "$HOME/manager.log" ]] || fail 'rollback invocó el gestor sin paquetes atribuibles'
+
+# Una segunda ejecución reutiliza la misma baseline: la transacción posterior
+# completa reconcilia únicamente los paquetes demostrados por su diferencia.
+run_tracked_package_transaction install-A sudo dnf install -y A
+record_packages_after
+assert_line "$ACTIVE_CYCLE_DIR/packages.tsv" $'A\tdnf\tinstalled_by_cycle'
+assert_line "$ACTIVE_CYCLE_DIR/packages.tsv" $'B\tdnf\tinstalled_by_cycle'
+assert_line "$ACTIVE_CYCLE_DIR/packages.tsv" $'C\tdnf\tinstalled_by_cycle'
+[[ "$(awk 'END {print NR - 1}' "$ACTIVE_CYCLE_DIR/package-transactions.tsv")" == 2 ]] || fail 'la reanudación no conservó ambas transacciones'
+validate_package_transactions
+
+# Una entrada pending solo es atribuible con una diferencia completa y con
+# hashes correctos; el estado legacy pending no bloquea su rollback.
+package_tracking_set A dnf pending
+preflight_package_removal
+remove_cycle_packages
+if grep -Fxq A "$HOME/installed.txt"; then fail 'pending demostrado por snapshots no se retiró'; fi
+
+# Un paquete pendiente que hoy exista, pero no aparezca en after-before, es
+# externo y se conserva aunque una transacción completa esté registrada.
+reset_cycle
+printf 'A\nbase\n' > "$HOME/installed.txt"
+record_packages_before
+package_tracking_set A dnf pending
+run_tracked_package_transaction unchanged true
+validate_package_transactions
+package_is_cycle_owned A dnf pending && fail 'se atribuyó un pending sin diferencia de transacción'
+remove_cycle_packages
+assert_line "$HOME/installed.txt" A
+
+# Un snapshot after ausente deja la evidencia incompleta: se conserva pending
+# y el preflight/rollback puede continuar con el resto de categorías.
+reset_cycle
+printf 'A\nbase\n' > "$HOME/installed.txt"
+printf 'package\tmanager\tstate\nA\tdnf\tpending\n' > "$ACTIVE_CYCLE_DIR/packages.tsv"
+mkdir -p "$ACTIVE_CYCLE_DIR/package-snapshots"
+printf 'transaction_id\tmanager\tlabel\tbefore_snapshot\tafter_snapshot\tbefore_sha256\tafter_sha256\n' > "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
+printf '0001\tdnf\tincomplete\tpackage-snapshots/0001-before.txt\tpackage-snapshots/0001-after.txt\t-\t-\n' >> "$ACTIVE_CYCLE_DIR/package-transactions.tsv"
+validate_package_transactions
+preflight_environment_restore 0
+remove_cycle_packages
+assert_line "$HOME/installed.txt" A
+
+# Si sí existe evidencia y su SHA-256 no coincide, sigue siendo corrupción y
+# debe abortar antes de que el rollback toque paquetes.
+reset_cycle
+printf 'base\n' > "$HOME/installed.txt"
+record_packages_before
+run_tracked_package_transaction install-A sudo dnf install -y A
+printf 'metadata-manipulada\n' >> "$ACTIVE_CYCLE_DIR/package-snapshots/0001-after.txt"
+if (validate_package_transactions); then fail 'un SHA-256 corrupto fue aceptado'; fi
 
 # --keep-packages muestra y conserva toda la diferencia sin invocar una retirada.
 reset_cycle
