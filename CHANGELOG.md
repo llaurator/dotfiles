@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.4.2](https://github.com/llaurator/dotfiles/compare/v1.4.1...v1.4.2) (2026-08-31)
+
+### 🐛 Fixes
+
+* **rollback:** normalize apt package identities ([cb13b45](https://github.com/llaurator/dotfiles/commit/cb13b45b214919ba5e9280f3c6611a465b9c79d8))
+
 ## [1.4.1](https://github.com/llaurator/dotfiles/compare/v1.4.0...v1.4.1) (2026-08-31)
 
 ### 🐛 Fixes
