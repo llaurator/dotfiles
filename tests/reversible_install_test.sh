@@ -272,9 +272,9 @@ mkdir -p "${vscode_settings%/*}"
 printf '{"local":true}\n' > "$vscode_settings"
 printf '{"locale":"fr","preserve":true}\n' > "$vscode_locale"
 run_install "$home_j" "$home_j/install.out" --profile personal --yes
-command grep -Fq '"local": true' "$vscode_settings" || fail 'VS Code perdió settings locales durante el merge'
-command grep -Fq '"locale": "es"' "$vscode_locale" || fail 'VS Code no activó el locale español'
-command grep -Fq '"preserve": true' "$vscode_locale" || fail 'VS Code perdió configuración previa de locale.json'
+command grep -Fq '"local":true' "$vscode_settings" || fail 'VS Code perdió settings locales durante el merge'
+command grep -Fq '"locale":"es"' "$vscode_locale" || fail 'VS Code no activó el locale español'
+command grep -Fq '"preserve":true' "$vscode_locale" || fail 'VS Code perdió configuración previa de locale.json'
 extensions_log_before="$(cksum "$STOW_LOG.code")"
 run_install "$home_j" "$home_j/uninstall.out" --uninstall --yes
 assert_file_content "$home_j/.ssh/config.d/local.conf" 'Host internal'

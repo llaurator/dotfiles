@@ -45,4 +45,46 @@ broken_sum="$(sha256sum "$target_file" | awk '{print $1}')"
 if merge_vscode_settings "$source_file" "$target_file"; then fail 'se aceptó un JSONC roto'; fi
 [[ "$(sha256sum "$target_file" | awk '{print $1}')" == "$broken_sum" ]] || fail 'se modificó un JSONC roto'
 
+# Fixture representativo: solo se cambia el valor root y se añade una clave
+# root ausente. Todo lo demás (incluida una cadena grande) coincide byte a byte.
+large_value="data:image/png;base64,$(printf 'A%.0s' {1..8192})"
+printf '%s\n' \
+  '{' \
+  '  // comentario inicial' \
+  '  "editor.formatOnSave": false,' \
+  '  "url": "https://example.invalid/path//kept",' \
+  '  "[dart]": {' \
+  '    "editor.formatOnSave": true,' \
+  '  },' \
+  '  /* comentario que debe permanecer aquí */' \
+  "  \"markdownExtended.pdfHeaderTemplate\": \"$large_value\"," \
+  '  "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },' \
+  '  // "[java]": { "editor.defaultFormatter": "redhat.java" },' \
+  '  "[java]": { "editor.defaultFormatter": "redhat.java" },' \
+  '}' > "$target_file"
+printf '%s\n' '{"editor.formatOnSave":true,"[jsonc]":{"editor.defaultFormatter":"dotfiles"}}' > "$source_file"
+printf '%s\n' \
+  '{' \
+  '  // comentario inicial' \
+  '  "editor.formatOnSave": true,' \
+  '  "url": "https://example.invalid/path//kept",' \
+  '  "[dart]": {' \
+  '    "editor.formatOnSave": true,' \
+  '  },' \
+  '  /* comentario que debe permanecer aquí */' \
+  "  \"markdownExtended.pdfHeaderTemplate\": \"$large_value\"," \
+  '  "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },' \
+  '  // "[java]": { "editor.defaultFormatter": "redhat.java" },' \
+  '  "[java]": { "editor.defaultFormatter": "redhat.java" },' \
+  '' \
+  '  "[jsonc]": {"editor.defaultFormatter":"dotfiles"}' \
+  '}' > "$TEST_ROOT/expected-settings.json"
+merge_vscode_settings "$source_file" "$target_file"
+cmp -s "$TEST_ROOT/expected-settings.json" "$target_file" || fail 'el merge textual modificó contenido no gestionado'
+grep -Fq '    "editor.formatOnSave": true,' "$target_file" || fail 'se modificó el valor anidado de [dart]'
+grep -Fq "$large_value" "$target_file" || fail 'se modificó la cadena base64 ajena'
+advanced_sum="$(sha256sum "$target_file" | awk '{print $1}')"
+merge_vscode_settings "$source_file" "$target_file"
+[[ "$(sha256sum "$target_file" | awk '{print $1}')" == "$advanced_sum" ]] || fail 'el fixture realista no fue byte-idempotente'
+
 printf 'OK: merge JSONC de VS Code conserva comentarios y configuración ajena\n'

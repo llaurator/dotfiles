@@ -405,9 +405,97 @@ jsonc_to_json() {
   ' "$stripped" > "$target"
   rm -f -- "$stripped"
 }
+jsonc_root_spans() {
+  LC_ALL=C awk '
+    { text = text $0 ORS }
+    function fail() { bad=1 }
+    function skip(  c,n) {
+      while (pos <= length(text)) {
+        c=substr(text,pos,1); n=substr(text,pos+1,1)
+        if (c ~ /[[:space:]]/) { pos++; continue }
+        if (c == "/" && n == "/") { pos+=2; while (pos <= length(text) && substr(text,pos,1) != "\n") pos++; continue }
+        if (c == "/" && n == "*") {
+          pos+=2; while (pos <= length(text) && !(substr(text,pos,1) == "*" && substr(text,pos+1,1) == "/")) pos++
+          if (pos > length(text)) { fail(); return }; pos+=2; continue
+        }
+        return
+      }
+    }
+    function quoted(  c,n) {
+      if (substr(text,pos,1) != "\"") { fail(); return "" }
+      pos++; value=""
+      while (pos <= length(text)) {
+        c=substr(text,pos,1)
+        if (c == "\\") { n=substr(text,pos+1,1); if (n == "") { fail(); return "" }; value=value c n; pos+=2; continue }
+        if (c == "\"") { pos++; return value }
+        value=value c; pos++
+      }
+      fail(); return ""
+    }
+    function compound(  c,n,stack,top,expected) {
+      stack=""; top=0
+      while (pos <= length(text)) {
+        c=substr(text,pos,1); n=substr(text,pos+1,1)
+        if (c == "\"") { quoted(); if (bad) return; continue }
+        if (c == "/" && (n == "/" || n == "*")) { skip(); if (bad) return; continue }
+        if (c == "{") { stack=stack "}"; top++; pos++; continue }
+        if (c == "[") { stack=stack "]"; top++; pos++; continue }
+        if (c == "}" || c == "]") {
+          expected=substr(stack,top,1); if (c != expected) { fail(); return }
+          top--; stack=substr(stack,1,top); pos++
+          if (top == 0) { value_end=pos-1; return }
+          continue
+        }
+        pos++
+      }
+      fail()
+    }
+    function parse_value(  c) {
+      skip(); value_start=pos; c=substr(text,pos,1)
+      if (c == "\"") { quoted(); value_end=pos-1; return }
+      if (c == "{" || c == "[") { compound(); return }
+      if (c == "" || c == "}" || c == ",") { fail(); return }
+      while (pos <= length(text)) {
+        c=substr(text,pos,1)
+        if (c == "," || c == "}" || c ~ /[[:space:]]/ || (c == "/" && (substr(text,pos+1,1) == "/" || substr(text,pos+1,1) == "*"))) { value_end=pos-1; return }
+        pos++
+      }
+      value_end=pos-1
+    }
+    END {
+      pos=1; skip(); if (bad || substr(text,pos,1) != "{") exit 1; pos++; count=0; last_comma=0; indent="  "
+      while (!bad) {
+        skip(); if (substr(text,pos,1) == "}") { root_close=pos; pos++; break }
+        key_start=pos; key=quoted(); if (bad) break
+        if (count == 0) { prefix=substr(text,1,key_start-1); sub(/^.*\n/, "", prefix); if (prefix ~ /^[ \t]*$/) indent=prefix }
+        skip(); if (substr(text,pos,1) != ":") { fail(); break }; pos++; parse_value(); if (bad) break
+        skip(); comma=0; if (substr(text,pos,1) == ",") { comma=1; pos++ } else if (substr(text,pos,1) != "}") { fail(); break }
+        print key "\t" value_start "\t" value_end "\t" comma
+        count++; last_comma=comma
+      }
+      skip(); if (bad || !root_close || pos <= length(text)) exit 1
+      print "@root\t" root_close "\t" count "\t" last_comma "\t" indent
+    }
+  ' "$1"
+}
+jsonc_replace_span() {
+  local source="$1" start="$2" end="$3" value_file="$4" target="$5"
+  head -c "$((start - 1))" "$source" > "$target" && cat "$value_file" >> "$target" && tail -c "+$((end + 1))" "$source" >> "$target"
+}
+jsonc_insert_root_property() {
+  local source="$1" close="$2" count="$3" last_comma="$4" indent="$5" key="$6" value_file="$7" target="$8" separator
+  [[ -n "$indent" ]] || indent='  '
+  separator=$'\n'
+  [[ "$count" == 0 || "$last_comma" == 1 ]] || separator=","$separator
+  head -c "$((close - 1))" "$source" > "$target" || return 1
+  printf '%s%s"%s": ' "$separator" "$indent" "$key" >> "$target"
+  cat "$value_file" >> "$target" || return 1
+  printf '\n' >> "$target"
+  tail -c "+$close" "$source" >> "$target"
+}
 merge_vscode_settings() {
   local settings_source="$1" settings_target="$2"
-  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode local_json comments merged_json
+  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode local_json comments working spans span_line key start end root_close root_count last_comma indent value_file
   settings_dir="${settings_target%/*}"
   mkdir -p "$settings_dir"
 
@@ -430,15 +518,34 @@ merge_vscode_settings() {
     return 1
   }
   if [[ -e "$settings_target" || -L "$settings_target" ]]; then
-    merged_json="${temporary}.json"
-    if ! jq -S -s '.[0] * .[1]' "$local_json" "$settings_source" > "$merged_json" ||
-       ! jq -e 'type == "object"' "$merged_json" >/dev/null 2>&1 ||
-       ! { cat "$comments"; cat "$merged_json"; } > "$temporary"; then
-      rm -f "$temporary" "$merged_json" "$local_json" "$comments"
+    working="${temporary}.working"
+    if ! cp "$settings_target" "$working"; then
+      rm -f "$temporary" "$local_json" "$comments"
+      warn 'VS Code: no se pudo preparar el merge textual de settings.'
+      return 1
+    fi
+    while IFS= read -r key; do
+      value_file="${temporary}.value"
+      jq -c --arg key "$key" '.[$key]' "$settings_source" | tr -d '\n' > "$value_file" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; return 1; }
+      spans="$(jsonc_root_spans "$working")" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; warn 'VS Code: JSONC local inválido; no se modifica.'; return 1; }
+      span_line="$(awk -F '\t' -v wanted="$key" '$1 == wanted { if (++count == 1) line=$0 } END { if (count > 1) exit 1; if (count) print line }' <<< "$spans")" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; warn 'VS Code: clave root duplicada; no se modifica.'; return 1; }
+      if [[ -n "$span_line" ]]; then
+        IFS=$'\t' read -r _ start end _ <<< "$span_line"
+        jsonc_replace_span "$working" "$start" "$end" "$value_file" "$temporary" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; return 1; }
+      else
+        IFS=$'\t' read -r _ root_close root_count last_comma indent <<< "$(awk -F '\t' '$1 == "@root" {print; exit}' <<< "$spans")"
+        jsonc_insert_root_property "$working" "$root_close" "$root_count" "$last_comma" "$indent" "$key" "$value_file" "$temporary" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; return 1; }
+      fi
+      mv -f "$temporary" "$working"
+      rm -f -- "$value_file"
+    done < <(jq -r 'keys[]' "$settings_source")
+    if ! jsonc_to_json "$working" "$local_json" "$comments" || ! jq -e 'type == "object"' "$local_json" >/dev/null 2>&1; then
+      rm -f "$temporary" "$working" "$local_json" "$comments"
       warn 'VS Code: no se pudo generar un merge JSON válido; los settings locales no se modifican.'
       return 1
     fi
-    rm -f -- "$merged_json" "$local_json" "$comments"
+    mv -f "$working" "$temporary"
+    rm -f -- "$local_json" "$comments"
     mode="$(vscode_file_mode "$settings_target")" || {
       rm -f "$temporary"
       warn "VS Code: no se pudieron consultar los permisos de $settings_target"
