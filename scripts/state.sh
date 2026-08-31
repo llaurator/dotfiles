@@ -1385,7 +1385,7 @@ preflight_package_removal() {
   case "$manager" in
     apt)
       output="$(LC_ALL=C apt-get -s remove "${packages[@]}")" || die 'No se pudo simular la retirada de paquetes.'
-      while read -r line; do [[ "$line" == Remv\ * ]] || continue; candidate="${line#Remv }"; candidate="${candidate%% *}"; array_contains "$candidate" "${packages[@]}" || extras+=("$candidate"); done <<< "$output"
+      while read -r line; do [[ "$line" == Remv\ * ]] || continue; candidate="${line#Remv }"; candidate="${candidate%% *}"; apt_removal_candidate_is_registered "$candidate" "${packages[@]}" || extras+=("$candidate"); done <<< "$output"
       ;;
     dnf)
       output="$(LC_ALL=C dnf remove --assumeno --no-autoremove "${packages[@]}" 2>&1)" || true
@@ -1400,6 +1400,35 @@ preflight_package_removal() {
 }
 
 array_contains() { local wanted="$1" item; shift; for item in "$@"; do [[ "$item" == "$wanted" ]] && return 0; done; return 1; }
+
+normalize_apt_package_identity() {
+  local package="$1"
+  if [[ "$package" =~ ^([a-z0-9][a-z0-9+.-]*):([a-z0-9][a-z0-9-]*)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  else
+    printf '%s' "$package"
+  fi
+}
+
+apt_removal_candidate_is_registered() {
+  local candidate="$1" package identity matches=0 native_arch candidate_base candidate_arch
+  shift
+  if [[ "$candidate" == *:* ]]; then
+    array_contains "$candidate" "$@" && return 0
+    [[ "$candidate" =~ ^([a-z0-9][a-z0-9+.-]*):([a-z0-9][a-z0-9-]*)$ ]] || return 1
+    candidate_base="${BASH_REMATCH[1]}"
+    candidate_arch="${BASH_REMATCH[2]}"
+    native_arch="$(dpkg --print-architecture 2>/dev/null || true)"
+    [[ "$candidate_arch" == "$native_arch" ]] || return 1
+    candidate="$candidate_base"
+  fi
+  for package in "$@"; do
+    identity="$(normalize_apt_package_identity "$package")"
+    [[ "$identity" == "$candidate" ]] || continue
+    matches=$((matches + 1))
+  done
+  [[ "$matches" -eq 1 ]]
+}
 
 fedora_vscode_repository_is_removable() {
   local before after
