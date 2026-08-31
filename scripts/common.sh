@@ -471,10 +471,10 @@ jsonc_root_spans() {
         skip(); if (substr(text,pos,1) != ":") { fail(); break }; pos++; parse_value(); if (bad) break
         skip(); comma=0; if (substr(text,pos,1) == ",") { comma=1; pos++ } else if (substr(text,pos,1) != "}") { fail(); break }
         print key "\t" value_start "\t" value_end "\t" comma
-        count++; last_comma=comma
+        count++; last_comma=comma; last_end=value_end
       }
       skip(); if (bad || !root_close || pos <= length(text)) exit 1
-      print "@root\t" root_close "\t" count "\t" last_comma "\t" indent
+      print "@root\t" root_close "\t" count "\t" last_comma "\t" last_end "\t" indent
     }
   ' "$1"
 }
@@ -483,19 +483,84 @@ jsonc_replace_span() {
   head -c "$((start - 1))" "$source" > "$target" && cat "$value_file" >> "$target" && tail -c "+$((end + 1))" "$source" >> "$target"
 }
 jsonc_insert_root_property() {
-  local source="$1" close="$2" count="$3" last_comma="$4" indent="$5" key="$6" value_file="$7" target="$8" separator
+  local source="$1" close="$2" count="$3" last_comma="$4" last_end="$5" indent="$6" key="$7" value_file="$8" target="$9" separator last_byte
   [[ -n "$indent" ]] || indent='  '
-  separator=$'\n'
-  [[ "$count" == 0 || "$last_comma" == 1 ]] || separator=","$separator
-  head -c "$((close - 1))" "$source" > "$target" || return 1
+  if [[ "$count" == 0 ]]; then last_end=$((close - 1)); fi
+  last_byte="$(dd if="$source" bs=1 skip="$((close - 2))" count=1 2>/dev/null | od -An -tx1 | tr -d '[:space:]')"
+  separator=''
+  [[ "$last_byte" == 0a || "$last_byte" == 0d ]] || separator=$'\n'
+  head -c "$last_end" "$source" > "$target" || return 1
+  [[ "$count" == 0 || "$last_comma" == 1 ]] || printf ',' >> "$target"
+  dd if="$source" bs=1 skip="$last_end" count="$((close - last_end - 1))" 2>/dev/null >> "$target" || return 1
   printf '%s%s"%s": ' "$separator" "$indent" "$key" >> "$target"
   cat "$value_file" >> "$target" || return 1
   printf '\n' >> "$target"
   tail -c "+$close" "$source" >> "$target"
 }
+jsonc_value_normalized() {
+  local value_file="$1" target="$2" wrapper comments
+  wrapper="${target}.wrapper"
+  comments="${target}.comments"
+  { printf '['; cat "$value_file"; printf ']'; } > "$wrapper" || return 1
+  jsonc_to_json "$wrapper" "$target" "$comments" && jq -c '.[0]' "$target" > "${target}.json" && mv -f "${target}.json" "$target"
+  rm -f -- "$wrapper" "$comments" "${target}.json"
+}
+jsonc_values_equal() {
+  local left="$1" right="$2" left_json right_json
+  left_json="$(mktemp "${TMPDIR:-/tmp}/dotfiles-jsonc-value.XXXXXX")" || return 1
+  right_json="$(mktemp "${TMPDIR:-/tmp}/dotfiles-jsonc-value.XXXXXX")" || { rm -f -- "$left_json"; return 1; }
+  jsonc_value_normalized "$left" "$left_json" && jsonc_value_normalized "$right" "$right_json" && cmp -s "$left_json" "$right_json"
+  local result=$?
+  rm -f -- "$left_json" "$right_json"
+  return "$result"
+}
+jsonc_value_type() {
+  local value_file="$1" normalized
+  normalized="$(mktemp "${TMPDIR:-/tmp}/dotfiles-jsonc-type.XXXXXX")" || return 1
+  if jsonc_value_normalized "$value_file" "$normalized"; then jq -r 'type' "$normalized"; else rm -f -- "$normalized"; return 1; fi
+  rm -f -- "$normalized"
+}
+jsonc_merge_object_values() {
+  local desired="$1" current="$2" target="$3" working temporary spans span_line key start end root_close root_count last_comma last_end indent desired_value current_value merged_value desired_type current_type
+  jq -e 'type == "object"' "$desired" >/dev/null 2>&1 || return 1
+  working="${target}.working"
+  cp "$current" "$working" || return 1
+  while IFS= read -r key; do
+    desired_value="${target}.desired"
+    current_value="${target}.current"
+    merged_value="${target}.merged"
+    jq -c --arg key "$key" '.[$key]' "$desired" | tr -d '\n' > "$desired_value" || { rm -f -- "$working" "$desired_value" "$current_value" "$merged_value"; return 1; }
+    spans="$(jsonc_root_spans "$working")" || { rm -f -- "$working" "$desired_value" "$current_value" "$merged_value"; return 1; }
+    span_line="$(awk -F '\t' -v wanted="$key" '$1 == wanted { if (++count == 1) line=$0 } END { if (count > 1) exit 1; if (count) print line }' <<< "$spans")" || { rm -f -- "$working" "$desired_value" "$current_value" "$merged_value"; return 1; }
+    if [[ -n "$span_line" ]]; then
+      IFS=$'\t' read -r _ start end _ <<< "$span_line"
+      dd if="$working" bs=1 skip="$((start - 1))" count="$((end - start + 1))" 2>/dev/null > "$current_value" || { rm -f -- "$working" "$desired_value" "$current_value" "$merged_value"; return 1; }
+      if jsonc_values_equal "$current_value" "$desired_value"; then
+        rm -f -- "$desired_value" "$current_value" "$merged_value"
+        continue
+      fi
+      desired_type="$(jq -r 'type' "$desired_value")"
+      current_type="$(jsonc_value_type "$current_value")" || { rm -f -- "$working" "$desired_value" "$current_value" "$merged_value"; return 1; }
+      if [[ "$desired_type" == object && "$current_type" == object ]]; then
+        jsonc_merge_object_values "$desired_value" "$current_value" "$merged_value" || { rm -f -- "$working" "$desired_value" "$current_value" "$merged_value"; return 1; }
+        desired_value="$merged_value"
+      fi
+      temporary="${target}.patch"
+      jsonc_replace_span "$working" "$start" "$end" "$desired_value" "$temporary" || { rm -f -- "$working" "$temporary" "$desired_value" "$current_value" "$merged_value"; return 1; }
+      mv -f "$temporary" "$working"
+    else
+      IFS=$'\t' read -r _ root_close root_count last_comma last_end indent <<< "$(awk -F '\t' '$1 == "@root" {print; exit}' <<< "$spans")"
+      temporary="${target}.patch"
+      jsonc_insert_root_property "$working" "$root_close" "$root_count" "$last_comma" "$last_end" "$indent" "$key" "$desired_value" "$temporary" || { rm -f -- "$working" "$temporary" "$desired_value" "$current_value" "$merged_value"; return 1; }
+      mv -f "$temporary" "$working"
+    fi
+    rm -f -- "$desired_value" "$current_value" "$merged_value"
+  done < <(jq -r 'keys[]' "$desired")
+  mv -f "$working" "$target"
+}
 merge_vscode_settings() {
   local settings_source="$1" settings_target="$2"
-  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode local_json comments working spans span_line key start end root_close root_count last_comma indent value_file
+  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode local_json comments
   settings_dir="${settings_target%/*}"
   mkdir -p "$settings_dir"
 
@@ -518,33 +583,16 @@ merge_vscode_settings() {
     return 1
   }
   if [[ -e "$settings_target" || -L "$settings_target" ]]; then
-    working="${temporary}.working"
-    if ! cp "$settings_target" "$working"; then
+    if ! jsonc_merge_object_values "$settings_source" "$settings_target" "$temporary"; then
       rm -f "$temporary" "$local_json" "$comments"
-      warn 'VS Code: no se pudo preparar el merge textual de settings.'
+      warn 'VS Code: no se pudo aplicar el merge textual de settings.'
       return 1
     fi
-    while IFS= read -r key; do
-      value_file="${temporary}.value"
-      jq -c --arg key "$key" '.[$key]' "$settings_source" | tr -d '\n' > "$value_file" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; return 1; }
-      spans="$(jsonc_root_spans "$working")" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; warn 'VS Code: JSONC local inválido; no se modifica.'; return 1; }
-      span_line="$(awk -F '\t' -v wanted="$key" '$1 == wanted { if (++count == 1) line=$0 } END { if (count > 1) exit 1; if (count) print line }' <<< "$spans")" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; warn 'VS Code: clave root duplicada; no se modifica.'; return 1; }
-      if [[ -n "$span_line" ]]; then
-        IFS=$'\t' read -r _ start end _ <<< "$span_line"
-        jsonc_replace_span "$working" "$start" "$end" "$value_file" "$temporary" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; return 1; }
-      else
-        IFS=$'\t' read -r _ root_close root_count last_comma indent <<< "$(awk -F '\t' '$1 == "@root" {print; exit}' <<< "$spans")"
-        jsonc_insert_root_property "$working" "$root_close" "$root_count" "$last_comma" "$indent" "$key" "$value_file" "$temporary" || { rm -f "$temporary" "$working" "$value_file" "$local_json" "$comments"; return 1; }
-      fi
-      mv -f "$temporary" "$working"
-      rm -f -- "$value_file"
-    done < <(jq -r 'keys[]' "$settings_source")
-    if ! jsonc_to_json "$working" "$local_json" "$comments" || ! jq -e 'type == "object"' "$local_json" >/dev/null 2>&1; then
-      rm -f "$temporary" "$working" "$local_json" "$comments"
+    if ! jsonc_to_json "$temporary" "$local_json" "$comments" || ! jq -e 'type == "object"' "$local_json" >/dev/null 2>&1; then
+      rm -f "$temporary" "$local_json" "$comments"
       warn 'VS Code: no se pudo generar un merge JSON válido; los settings locales no se modifican.'
       return 1
     fi
-    mv -f "$working" "$temporary"
     rm -f -- "$local_json" "$comments"
     mode="$(vscode_file_mode "$settings_target")" || {
       rm -f "$temporary"

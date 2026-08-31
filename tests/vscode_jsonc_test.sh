@@ -76,7 +76,6 @@ printf '%s\n' \
   '  "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },' \
   '  // "[java]": { "editor.defaultFormatter": "redhat.java" },' \
   '  "[java]": { "editor.defaultFormatter": "redhat.java" },' \
-  '' \
   '  "[jsonc]": {"editor.defaultFormatter":"dotfiles"}' \
   '}' > "$TEST_ROOT/expected-settings.json"
 merge_vscode_settings "$source_file" "$target_file"
@@ -86,5 +85,55 @@ grep -Fq "$large_value" "$target_file" || fail 'se modificó la cadena base64 aj
 advanced_sum="$(sha256sum "$target_file" | awk '{print $1}')"
 merge_vscode_settings "$source_file" "$target_file"
 [[ "$(sha256sum "$target_file" | awk '{print $1}')" == "$advanced_sum" ]] || fail 'el fixture realista no fue byte-idempotente'
+
+# Un objeto equivalente no se toca y un objeto gestionado distinto se fusiona
+# recursivamente sin borrar subclaves ni comentarios locales.
+printf '%s\n' \
+  '{' \
+  '  "[javascript]": {' \
+  '    "editor.defaultFormatter": "esbenp.prettier-vscode"' \
+  '  },' \
+  '  "managedArray": [ 1, 2, 3 ],' \
+  '  "[python]": {' \
+  '    // comentario local' \
+  '    "editor.defaultFormatter": "ms-python.black-formatter",' \
+  '    "editor.formatOnSave": false,' \
+  '    "editor.codeActionsOnSave": {' \
+  '      // comentario interno' \
+  '      "source.organizeImports": "never",' \
+  '      "source.fixAll": "never"' \
+  '    }' \
+  '  }' \
+  '}' > "$target_file"
+printf '%s\n' '{"[javascript]":{"editor.defaultFormatter":"esbenp.prettier-vscode"},"managedArray":[1,2,3],"[python]":{"editor.defaultFormatter":"charliermarsh.ruff","editor.codeActionsOnSave":{"source.organizeImports":"always"}}}' > "$source_file"
+printf '%s\n' \
+  '{' \
+  '  "[javascript]": {' \
+  '    "editor.defaultFormatter": "esbenp.prettier-vscode"' \
+  '  },' \
+  '  "managedArray": [ 1, 2, 3 ],' \
+  '  "[python]": {' \
+  '    // comentario local' \
+  '    "editor.defaultFormatter": "charliermarsh.ruff",' \
+  '    "editor.formatOnSave": false,' \
+  '    "editor.codeActionsOnSave": {' \
+  '      // comentario interno' \
+  '      "source.organizeImports": "always",' \
+  '      "source.fixAll": "never"' \
+  '    }' \
+  '  }' \
+  '}' > "$TEST_ROOT/expected-object-merge.json"
+merge_vscode_settings "$source_file" "$target_file"
+cmp -s "$TEST_ROOT/expected-object-merge.json" "$target_file" || fail 'el merge de objetos alteró claves o formato locales'
+object_sum="$(sha256sum "$target_file" | awk '{print $1}')"
+merge_vscode_settings "$source_file" "$target_file"
+[[ "$(sha256sum "$target_file" | awk '{print $1}')" == "$object_sum" ]] || fail 'el merge de objetos no fue byte-idempotente'
+
+# Varias inserciones root conservan la coma en la línea de la propiedad previa.
+printf '{\n  "existing": 1\n}\n' > "$target_file"
+printf '{"alpha":true,"beta":false}\n' > "$source_file"
+printf '{\n  "existing": 1,\n  "alpha": true,\n  "beta": false\n}\n' > "$TEST_ROOT/expected-insertions.json"
+merge_vscode_settings "$source_file" "$target_file"
+cmp -s "$TEST_ROOT/expected-insertions.json" "$target_file" || fail 'las inserciones root no conservaron comas naturales'
 
 printf 'OK: merge JSONC de VS Code conserva comentarios y configuración ajena\n'
