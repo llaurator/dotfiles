@@ -2,6 +2,22 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.4.1](https://github.com/llaurator/dotfiles/compare/v1.4.0...v1.4.1) (2026-08-31)
+
+### 🐛 Fixes
+
+* **config:** preserve preexisting local settings ([8251ad7](https://github.com/llaurator/dotfiles/commit/8251ad70467e9d4de51553b48b4d99cb8f1ac744))
+* **fonts:** reuse existing MesloLGS Nerd Font ([3ef6ae5](https://github.com/llaurator/dotfiles/commit/3ef6ae548618e4d9c72523f2bb75a9163a5beb7a))
+* **installer:** improve bootstrap and preflight safety ([29dd80e](https://github.com/llaurator/dotfiles/commit/29dd80ea1c2e8e717717737feb0146f40ec1c987))
+* **rollback:** recover interrupted package transactions ([230a89b](https://github.com/llaurator/dotfiles/commit/230a89bc334f6b000db03ca0ff942ad107638dde))
+* **vscode:** merge managed JSONC values minimally ([65319f5](https://github.com/llaurator/dotfiles/commit/65319f5b42c26e7a76cdf5126fa59f875a6187f3))
+* **vscode:** preserve JSONC formatting during merge ([5cb4631](https://github.com/llaurator/dotfiles/commit/5cb463192700096d771572efb23fbd4d52ea0401))
+* **zsh:** reuse resolved components during install ([584c751](https://github.com/llaurator/dotfiles/commit/584c751735c776eb028b8cec0577a6a8f392d642))
+
+### ♻️ Refactoring
+
+* **zsh:** resolve existing components safely ([5760eb1](https://github.com/llaurator/dotfiles/commit/5760eb1ff9720a971cf7fa972f733c61e992883c))
+
 ## [1.4.0](https://github.com/llaurator/dotfiles/compare/v1.3.0...v1.4.0) (2026-08-30)
 
 ### ✨ Features
