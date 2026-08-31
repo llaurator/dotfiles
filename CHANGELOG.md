@@ -2,6 +2,17 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.4.3](https://github.com/llaurator/dotfiles/compare/v1.4.2...v1.4.3) (2026-08-31)
+
+### 🐛 Fixes
+
+* **installer:** prevent login shell test leakage ([528355a](https://github.com/llaurator/dotfiles/commit/528355a87b1ecf37965857116e94e55c47e99427))
+* **status:** detect missing managed zsh config ([e047420](https://github.com/llaurator/dotfiles/commit/e047420c990707f9809e62cc4c27b44f236f581a))
+
+### 🧹 Chores
+
+* **p10k:** update prompt configuration ([a82a94b](https://github.com/llaurator/dotfiles/commit/a82a94b8ecf58e8461407e5bae4483ef1832eb67))
+
 ## [1.4.2](https://github.com/llaurator/dotfiles/compare/v1.4.1...v1.4.2) (2026-08-31)
 
 ### 🐛 Fixes
