@@ -11,6 +11,33 @@ success(){ printf '%s✓%s  %s\n' "$GREEN" "$RESET" "$*"; }
 warn(){ printf '%s!%s  %s\n' "$YELLOW" "$RESET" "$*"; }
 die(){ printf '%s✗%s  %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 command_exists(){ command -v "$1" >/dev/null 2>&1; }
+login_shell_is_registered(){
+  local shell_path="$1" shells_file="${2:-/etc/shells}" entry
+  [[ "$shell_path" == /* && "$shell_path" != *$'\n'* && "$shell_path" != *$'\t'* ]] || return 1
+  [[ -f "$shells_file" && -r "$shells_file" ]] || return 1
+  # Use shell builtins here: validating a PATH-derived executable must not
+  # itself trust another executable resolved through that same PATH.
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    [[ "$entry" == "$shell_path" ]] && return 0
+  done < "$shells_file"
+  return 1
+}
+is_valid_login_shell(){
+  local shell_path="$1"
+  [[ "$shell_path" == /* && "$shell_path" != *$'\n'* && "$shell_path" != *$'\t'* ]] || return 1
+  if [[ "${DOTFILES_OS:-}" == macos ]]; then
+    # Prefer the system registry on macOS too, so an existing /bin/bash can be
+    # restored. Keep Apple's supported /bin/zsh as a fallback if the registry
+    # cannot be read.
+    if [[ -f /etc/shells && -r /etc/shells ]]; then
+      login_shell_is_registered "$shell_path" /etc/shells
+    else
+      [[ "$shell_path" == /bin/zsh && -x /bin/zsh ]]
+    fi
+  else
+    login_shell_is_registered "$shell_path" /etc/shells
+  fi
+}
 is_root_user(){ local uid; uid="$(id -u)" || return 1; [[ "$uid" == 0 ]]; }
 validate_sudo_once(){
   [[ "$SUDO_VALIDATED" -eq 0 ]] || return 0
@@ -27,6 +54,7 @@ run_privileged(){
 }
 privileged_chsh(){
   local shell_path="$1" target_user
+  is_valid_login_shell "$shell_path" || { warn "Se rechazó un shell de login no válido: $shell_path"; return 1; }
   target_user="$(id -un)" || return 1
   run_privileged chsh -s "$shell_path" "$target_user"
 }

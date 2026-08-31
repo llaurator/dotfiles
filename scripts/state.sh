@@ -1315,7 +1315,10 @@ validate_environment_manifest() {
   while IFS=$'\t' read -r key before after extra; do
     [[ -n "$key" && -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de entorno corrupta.'
     case "$key" in
-      login_shell) ;;
+      login_shell)
+        if [[ "$before" != - ]] && ! is_valid_login_shell "$before"; then die 'Shell previo de la baseline no válido.'; fi
+        if [[ "$after" != - ]] && ! is_valid_login_shell "$after"; then die 'Shell instalado de la baseline no válido.'; fi
+        ;;
       fedora_vscode_repository)
         [[ "$before" == missing || "$before" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$ ]] || die 'Estado previo del repositorio de VS Code no válido.'
         [[ "$after" == - || "$after" == missing || "$after" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$ ]] || die 'Estado instalado del repositorio de VS Code no válido.'
@@ -1493,6 +1496,7 @@ restore_login_shell() {
   local before after current checkpoint
   before="$(environment_field login_shell 2)"; after="$(environment_field login_shell 3)"; current="$(current_login_shell)"
   [[ "$after" != - && "$before" != - ]] || return 0
+  is_valid_login_shell "$before" || die 'El shell previo registrado no es un shell de login válido; se aborta la restauración.'
   checkpoint="$(restore_checkpoint_state shell_restore login_shell shell-restored "$before")"
   if [[ "$checkpoint" == completed ]]; then return 0; fi
   if [[ "$current" == "$before" ]]; then

@@ -682,6 +682,10 @@ ensure_zsh_shell(){
   local zsh_path current
   if [[ "$DOTFILES_OS" == macos && -x /bin/zsh ]]; then zsh_path=/bin/zsh; else zsh_path="$(command -v zsh || true)"; fi
   [[ -n "$zsh_path" ]] || { warn 'No se ha encontrado zsh.'; return; }
+  if ! is_valid_login_shell "$zsh_path"; then
+    warn "La ruta de Zsh no es un shell de login válido y no se modificará: $zsh_path"
+    return
+  fi
   current="$(current_login_shell)"
   if [[ "$current" == "$zsh_path" ]]; then success 'Zsh ya es el shell por defecto.'; return; fi
   info 'Configurando Zsh como shell por defecto...'

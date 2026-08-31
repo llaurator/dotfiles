@@ -38,7 +38,8 @@ printf '%s\n' '#!/usr/bin/env bash' \
   'exit 99' > "$FAKE_BIN/dnf"
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' '[[ "${1:-}" == -v ]] && exit 0' 'exec "$@"' > "$FAKE_BIN/sudo"
-chmod +x "$FAKE_BIN/rpm" "$FAKE_BIN/dnf" "$FAKE_BIN/sudo"
+printf '%s\n' '#!/usr/bin/env bash' 'case "${1:-}" in -u) printf "1000\n";; -un) printf "test-user\n";; *) exit 2;; esac' > "$FAKE_BIN/id"
+chmod +x "$FAKE_BIN/rpm" "$FAKE_BIN/dnf" "$FAKE_BIN/sudo" "$FAKE_BIN/id"
 
 get_system_packages() { SYSTEM_PACKAGES=(A B C); }
 current_login_shell() { printf '%s\n' /bin/bash; }

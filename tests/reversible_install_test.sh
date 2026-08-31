@@ -60,8 +60,9 @@ run_install() {
   shift 2
   (
     cd "$home"
+    assert_critical_fakes
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
-      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/bash DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
       GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
       "$FIXTURE_REPO/install.sh" "$@"
   ) > "$output" 2>&1
@@ -72,8 +73,9 @@ run_install_with_input() {
   shift 3
   printf '%b' "$input" | (
     cd "$home"
+    assert_critical_fakes
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
-      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/zsh DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
+      SHELL="$FAKE_BIN/zsh" DOTFILES_LOGIN_SHELL=/bin/bash DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
       GIT_CONFIG_GLOBAL="$home/.gitconfig" GIT_CONFIG_NOSYSTEM=1 \
       "$FIXTURE_REPO/install.sh" "$@"
   ) > "$output" 2>&1
@@ -84,6 +86,7 @@ run_install_dynamic_shell() {
   shift 2
   (
     cd "$home"
+    assert_critical_fakes
     HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$FAKE_BIN:$PATH" \
       SHELL="$FAKE_BIN/zsh" DOTFILES_SKIP_FONT=1 STOW_TEST_LOG="$STOW_LOG" \
       LOGIN_SHELL_FILE="${LOGIN_SHELL_FILE:-}" CHSH_FAILURE_FILE="${CHSH_FAILURE_FILE:-}" \
@@ -96,6 +99,13 @@ run_install_dynamic_shell() {
 
 expect_failure() {
   if "$@"; then fail 'la operación debía haber fallado'; fi
+}
+
+assert_critical_fakes() {
+  local command_name
+  for command_name in sudo chsh usermod passwd useradd userdel groupadd groupdel dnf systemctl loginctl; do
+    [[ -x "$FAKE_BIN/$command_name" ]] || fail "falta el tripwire crítico: $command_name"
+  done
 }
 
 mkdir -p "$FIXTURE_REPO" "$FAKE_BIN"
@@ -138,19 +148,37 @@ printf '%s\n' \
   'done < <(find "$directory/$package" -type f -print0)' \
   > "$FAKE_BIN/stow"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FAKE_BIN/zsh"
-printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FAKE_BIN/chsh"
+# Los comandos privilegiados existen antes del primer run_install. sudo delega
+# únicamente en otros dobles de este mismo PATH; cualquier comando inesperado
+# deja una traza y falla en vez de alcanzar el host.
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "sudo %s\n" "$*" >> "$TEST_ROOT/privileged.log"' '[[ "${1:-}" == -v ]] && exit 0' 'exec "$@"' > "$FAKE_BIN/sudo"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'printf "chsh %s\n" "$*" >> "$TEST_ROOT/privileged.log"' 'exit 0' > "$FAKE_BIN/chsh"
+# shellcheck disable=SC2016
+printf '%s\n' '#!/usr/bin/env bash' 'case "${1:-}" in -u) printf "1000\n";; -un) printf "test-user\n";; *) exit 2;; esac' > "$FAKE_BIN/id"
+for command_name in usermod passwd useradd userdel groupadd groupdel dnf systemctl loginctl; do
+  # shellcheck disable=SC2016
+  printf '%s\n' '#!/usr/bin/env bash' "printf 'forbidden ${command_name} %s\n' \"\$*\" >> \"\$TEST_ROOT/privileged.log\"" 'exit 99' > "$FAKE_BIN/$command_name"
+done
 # shellcheck disable=SC2016
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'if [[ "${1:-}" == --list-extensions ]]; then exit 0; fi' \
   'printf "%s\n" "$*" >> "$STOW_TEST_LOG.code"' \
   > "$FAKE_BIN/code"
-chmod +x "$FAKE_BIN/stow" "$FAKE_BIN/zsh" "$FAKE_BIN/chsh" "$FAKE_BIN/code"
+chmod +x "$FAKE_BIN/stow" "$FAKE_BIN/zsh" "$FAKE_BIN/sudo" "$FAKE_BIN/chsh" "$FAKE_BIN/id" "$FAKE_BIN/code" \
+  "$FAKE_BIN"/{usermod,passwd,useradd,userdel,groupadd,groupdel,dnf,systemctl,loginctl}
+# A missing protection must stop the harness before it launches install.sh.
+mv "$FAKE_BIN/sudo" "$FAKE_BIN/sudo.disabled"
+if (assert_critical_fakes) >/dev/null 2>&1; then fail 'la ausencia de sudo fake no bloqueó el harness'; fi
+mv "$FAKE_BIN/sudo.disabled" "$FAKE_BIN/sudo"
 
 # A, W e Y: primera instalación real desde una ruta arbitraria y baseline missing.
 home_a="$TEST_ROOT/home-a"
 prepare_home "$home_a"
 run_install "$home_a" "$home_a/install.out" --profile server --yes
+[[ ! -e "$TEST_ROOT/privileged.log" ]] || fail 'el primer install alcanzó sudo o chsh pese al zsh temporal'
 cycle_a="$(active_cycle_dir "$home_a")"
 [[ -L "$home_a/.zshrc" && -L "$home_a/.gitconfig" ]] || fail 'Stow no desplegó los enlaces esperados'
 assert_contains "$cycle_a/manifest.tsv" $'.zshrc\tmissing\t-\t-\tstow\tzsh/.zshrc'
@@ -407,11 +435,11 @@ home_resume="$TEST_ROOT/home-resume"
 prepare_home "$home_resume"
 printf 'configuración original\n' > "$home_resume/.zshrc"
 login_shell_file="$home_resume/login-shell"
-printf '/usr/bin/zsh\n' > "$login_shell_file"
+printf '/bin/bash\n' > "$login_shell_file"
 LOGIN_SHELL_FILE="$login_shell_file" run_install_dynamic_shell "$home_resume" "$home_resume/install.out" \
   --profile server --yes --backup-conflicts
 cycle_resume="$(active_cycle_dir "$home_resume")"
-sed -i $'s#^login_shell\t.*#login_shell\t/bin/bash\t/usr/bin/zsh#' "$cycle_resume/environment.tsv"
+sed -i $'s#^login_shell\t.*#login_shell\t/bin/sh\t/bin/bash#' "$cycle_resume/environment.tsv"
 
 package_state_dir="$home_resume/package-state"
 mkdir -p "$package_state_dir"
@@ -483,7 +511,7 @@ journal_before="$(cksum "$cycle_resume/restore.log")"
 LOGIN_SHELL_FILE="$login_shell_file" CHSH_FAILURE_FILE="$chsh_failure_file" \
   PACKAGE_STATE_DIR="$package_state_dir" run_install_dynamic_shell "$home_resume" "$home_resume/partial-dry-run.out" --uninstall --dry-run
 assert_contains "$home_resume/partial-dry-run.out" 'Hecho:      ~/.zshrc'
-assert_contains "$home_resume/partial-dry-run.out" 'pendiente: /usr/bin/zsh → /bin/bash'
+assert_contains "$home_resume/partial-dry-run.out" 'pendiente: /bin/bash → /bin/sh'
 [[ "$(cksum "$cycle_resume/restore.log")" == "$journal_before" && ! -e "$cycle_resume/restore-journal.tsv" ]] ||
   fail 'el dry-run parcial modificó los checkpoints'
 LOGIN_SHELL_FILE="$login_shell_file" PACKAGE_STATE_DIR="$package_state_dir" \
@@ -507,7 +535,7 @@ remove_failure_file="$home_resume/fail-remove"
 : > "$remove_failure_file"
 REMOVE_FAILURE_FILE="$remove_failure_file"; REMOVE_FAILURE_MATCH='.resume-upstream'; PACKAGE_FAILURE_FILE=''
 expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/upstream-failure.out" --uninstall --yes
-assert_file_content "$login_shell_file" '/bin/bash'
+assert_file_content "$login_shell_file" '/bin/sh'
 [[ -e "$package_state_dir/zsh" && -e "$package_state_dir/tool-a" ]] || fail 'un fallo upstream retiró paquetes'
 [[ -d "$resume_upstream" ]] || fail 'el fallo upstream no fue reproducible'
 
@@ -515,8 +543,7 @@ assert_file_content "$login_shell_file" '/bin/bash'
 REMOVE_FAILURE_FILE=''; REMOVE_FAILURE_MATCH=''
 package_failure_file="$home_resume/fail-packages"
 : > "$package_failure_file"
-PACKAGE_FAILURE_FILE="$package_failure_file"
-expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/package-failure.out" --uninstall --yes
+PACKAGE_FAILURE_FILE="$package_failure_file" expect_failure run_install_dynamic_shell "$home_resume" "$home_resume/package-failure.out" --uninstall --yes
 [[ ! -e "$resume_upstream" ]] || fail 'el retry no completó upstream'
 [[ -e "$package_state_dir/zsh" && -e "$package_state_dir/tool-a" ]] || fail 'el gestor ficticio fallido retiró paquetes'
 

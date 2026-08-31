@@ -119,7 +119,7 @@ run_case() {
 
   HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$bin" \
     PLATFORM_OS_NAME="$os_name" PLATFORM_MANAGER_LOG="$manager_log" PLATFORM_FORBIDDEN_LOG="$forbidden_log" \
-    DOTFILES_SKIP_FONT=1 DOTFILES_LOGIN_SHELL="$bin/zsh" GIT_CONFIG_GLOBAL="$home/.gitconfig" \
+    DOTFILES_SKIP_FONT=1 DOTFILES_LOGIN_SHELL=/bin/bash GIT_CONFIG_GLOBAL="$home/.gitconfig" \
     GIT_CONFIG_NOSYSTEM=1 "$repo/install.sh" --profile server --yes > "$case_root/install.out" 2>&1
   cycle="$home/.state/dotfiles/cycles/$(< "$home/.state/dotfiles/active")"
   printf 'code\t%s\tinstalled_by_cycle\n' "$manager" >> "$cycle/packages.tsv"
@@ -129,7 +129,7 @@ run_case() {
 
   HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$bin" \
     PLATFORM_OS_NAME="$os_name" PLATFORM_MANAGER_LOG="$manager_log" PLATFORM_FORBIDDEN_LOG="$forbidden_log" \
-    DOTFILES_SKIP_FONT=1 DOTFILES_LOGIN_SHELL="$bin/zsh" GIT_CONFIG_GLOBAL="$home/.gitconfig" \
+    DOTFILES_SKIP_FONT=1 DOTFILES_LOGIN_SHELL=/bin/bash GIT_CONFIG_GLOBAL="$home/.gitconfig" \
     GIT_CONFIG_NOSYSTEM=1 "$repo/install.sh" --uninstall --dry-run > "$output" 2>&1
 
   snapshot_after="$(find "$home" -type f -o -type l | sort | xargs cksum)"
