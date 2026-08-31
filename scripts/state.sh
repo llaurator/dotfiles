@@ -11,6 +11,7 @@ ACTIVE_CYCLE_DIR=''
 STATE_ROOT=''
 MANIFEST_FILE=''
 OWNERSHIP_FILE=''
+STATUS_INCOMPLETE_RESOURCES=()
 FEDORA_VSCODE_REPO_FILE='/etc/yum.repos.d/vscode.repo'
 
 validate_home_and_state() {
@@ -675,10 +676,10 @@ ownership_entries_exist() {
   [[ -f "$OWNERSHIP_FILE" ]] && awk 'NR > 1 { found=1 } END { exit !found }' "$OWNERSHIP_FILE"
 }
 
-preflight_owned_path() {
+owned_path_matches_proof() {
   local relative="$1" kind="$2" proof="$3" source="$4" target
   target="$HOME/$relative"
-  if [[ ! -e "$target" && ! -L "$target" ]]; then return 0; fi
+  [[ -e "$target" || -L "$target" ]] || return 1
   case "$kind" in
     stow)
       if [[ "$proof" == pending ]]; then
@@ -689,6 +690,27 @@ preflight_owned_path() {
       ;;
     *) [[ "$(path_fingerprint "$target")" == "$proof" ]] ;;
   esac
+}
+
+preflight_owned_path() {
+  local relative="$1" kind="$2" proof="$3" source="$4" target
+  target="$HOME/$relative"
+  if [[ ! -e "$target" && ! -L "$target" ]]; then return 0; fi
+  owned_path_matches_proof "$relative" "$kind" "$proof" "$source"
+}
+
+managed_resources_are_complete() {
+  local relative kind proof source target
+  STATUS_INCOMPLETE_RESOURCES=()
+  while IFS=$'\t' read -r relative kind proof source; do
+    target="$HOME/$relative"
+    if [[ ! -e "$target" && ! -L "$target" ]]; then
+      STATUS_INCOMPLETE_RESOURCES+=("$relative (ausente)")
+    elif ! owned_path_matches_proof "$relative" "$kind" "$proof" "$source"; then
+      STATUS_INCOMPLETE_RESOURCES+=("$relative (no coincide con el recurso gestionado)")
+    fi
+  done < <(sed -n '2,$p' "$OWNERSHIP_FILE")
+  ((${#STATUS_INCOMPLETE_RESOURCES[@]} == 0))
 }
 
 configuration_restore_state() {
@@ -948,7 +970,7 @@ package_stow_status() {
 }
 
 show_dotfiles_status() {
-  local profile='no configurado' baseline='no disponible' installed='no' restore='ninguno' package shell hosts='ninguno'
+  local profile='no configurado' baseline='no disponible' installed='no' restore='ninguno' package shell hosts='ninguno' resource
   validate_home_and_state
   if [[ -f "$HOME/.config/dotfiles/profile" && ! -L "$HOME/.config/dotfiles/profile" ]]; then
     IFS= read -r profile < "$HOME/.config/dotfiles/profile" || profile='no configurado'
@@ -957,8 +979,14 @@ show_dotfiles_status() {
   if validate_active_cycle; then
     baseline="$BASELINE_STATUS, formato $BASELINE_FORMAT ($ACTIVE_CYCLE)"
     if [[ "$BASELINE_STATUS" == active ]] && restore_has_progress; then restore='parcial / pendiente'; fi
+    if [[ "$BASELINE_STATUS" == active ]] && ownership_entries_exist && managed_resources_are_complete; then
+      installed='yes'
+    fi
+  elif managed_dotfiles_exist; then
+    # Las instalaciones anteriores a la baseline no registran ownership; se
+    # conserva el indicador histórico basado en enlaces Stow verificables.
+    installed='yes'
   fi
-  if managed_dotfiles_exist; then installed='yes'; fi
   printf '\nDotfiles status\n\n'
   shell="$(current_login_shell)"
   printf 'Repo:       %s\nProfile:    %s\nBaseline:   %s\nRestore:    %s\nInstalled:  %s\nShell:      %s\n\n' "$DOTFILES_ROOT" "$profile" "$baseline" "$restore" "$installed" "$shell"
@@ -966,6 +994,12 @@ show_dotfiles_status() {
   for package in zsh git btop ssh vscode; do
     if package_stow_status "$package"; then success "$package"; else printf '  - %s\n' "$package"; fi
   done
+  if ((${#STATUS_INCOMPLETE_RESOURCES[@]} > 0)); then
+    printf '\nManaged resources:\n'
+    for resource in "${STATUS_INCOMPLETE_RESOURCES[@]}"; do
+      printf '  - ~/%s\n' "$resource"
+    done
+  fi
   printf '\nLocal:\n'
   if [[ -n "$(git config --get user.name 2>/dev/null || true)" && -n "$(git config --get user.email 2>/dev/null || true)" ]]; then success 'Identidad Git configurada'; else printf '  - Identidad Git incompleta\n'; fi
   if [[ -d "$HOME/.ssh/config.d" ]] && compgen -G "$HOME/.ssh/config.d/*.conf" >/dev/null; then hosts='configurados'; fi
