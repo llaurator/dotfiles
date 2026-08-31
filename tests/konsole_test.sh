@@ -67,6 +67,7 @@ printf 'font fixture\n' > "$HOME/.local/share/fonts/MesloLGSNerdFont-Regular.ttf
 mkdir -p "$HOME/.config"
 printf '[Desktop Entry]\nDefaultProfile=User.profile\nOther=keep\n\n[Other]\nKey=keep\n' > "$HOME/.config/konsolerc"
 record_baseline_path '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+record_baseline_path '.local/share/konsole/Dotfiles-Dracula.colorscheme' konsole_colorscheme '-'
 record_baseline_path '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
 record_baseline_path '.config/konsolerc' konsole_config '-'
 CONFIGURE_KONSOLE=1
@@ -94,7 +95,10 @@ grep -Fxq 'Other=keep' "$HOME/.config/konsolerc" || fail 'rollback no restauró 
 rm -f "$HOME/.config/konsolerc"
 printf 'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint\n' > "$MANIFEST_FILE"
 printf 'relative_path\tkind\tproof\tsource\n' > "$OWNERSHIP_FILE"
+printf 'action\tresource\tstate\n' > "$ACTIVE_CYCLE_DIR/restore-journal.tsv"
+rm -f -- "$ACTIVE_CYCLE_DIR/restore.log"
 record_baseline_path '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+record_baseline_path '.local/share/konsole/Dotfiles-Dracula.colorscheme' konsole_colorscheme '-'
 record_baseline_path '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
 record_baseline_path '.config/konsolerc' konsole_config '-'
 DOTFILES_KONSOLE_SHA256='00'
@@ -102,14 +106,47 @@ REQUEST_CONFIGURE_KONSOLE=1
 configure_konsole personal
 [[ ! -e "$HOME/.local/share/konsole/Dracula.colorscheme" && ! -e "$HOME/.local/share/konsole/Dotfiles.profile" && ! -e "$HOME/.config/konsolerc" ]] || fail 'hash incorrecto dejó cambios parciales'
 
-# Recursos preexistentes y modificaciones posteriores se conservan.
+# Un Dracula externo distinto se conserva y permite configurar el perfil con
+# el esquema propio, que sí queda atribuible al ciclo.
 DOTFILES_KONSOLE_SHA256="$(sha256sum "$TEST_ROOT/Dracula.colorscheme" | awk '{print $1}')"
 mkdir -p "$HOME/.local/share/konsole"
 printf 'user scheme\n' > "$HOME/.local/share/konsole/Dracula.colorscheme"
+printf 'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint\n' > "$MANIFEST_FILE"
+printf 'relative_path\tkind\tproof\tsource\n' > "$OWNERSHIP_FILE"
+printf 'action\tresource\tstate\n' > "$ACTIVE_CYCLE_DIR/restore-journal.tsv"
+record_baseline_path '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+record_baseline_path '.local/share/konsole/Dotfiles-Dracula.colorscheme' konsole_colorscheme '-'
+record_baseline_path '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
+record_baseline_path '.config/konsolerc' konsole_config '-'
 configure_konsole personal
 [[ "$(< "$HOME/.local/share/konsole/Dracula.colorscheme")" == 'user scheme' ]] || fail 'se sobrescribió esquema preexistente'
-printf 'user profile\n' > "$HOME/.local/share/konsole/Dotfiles.profile"
+assert_file "$HOME/.local/share/konsole/Dotfiles-Dracula.colorscheme"
+grep -Fxq 'ColorScheme=Dotfiles-Dracula' "$HOME/.local/share/konsole/Dotfiles.profile" || fail 'perfil no usó el esquema separado'
+remove_owned_configuration
+restore_baseline_files
+[[ "$(< "$HOME/.local/share/konsole/Dracula.colorscheme")" == 'user scheme' ]] || fail 'rollback tocó Dracula externo'
+[[ ! -e "$HOME/.local/share/konsole/Dotfiles-Dracula.colorscheme" ]] || fail 'rollback no retiró el esquema propio'
+
+# Un esquema alternativo preexistente que no coincide tampoco se sobrescribe.
+printf 'conflicto propio\n' > "$HOME/.local/share/konsole/Dotfiles-Dracula.colorscheme"
+rm -f -- "$HOME/.local/share/konsole/Dotfiles.profile"
 configure_konsole personal
-[[ "$(< "$HOME/.local/share/konsole/Dotfiles.profile")" == 'user profile' ]] || fail 'se sobrescribió perfil preexistente'
+[[ "$(< "$HOME/.local/share/konsole/Dotfiles-Dracula.colorscheme")" == 'conflicto propio' ]] || fail 'se sobrescribió el esquema alternativo preexistente'
+[[ ! -e "$HOME/.local/share/konsole/Dotfiles.profile" ]] || fail 'se configuró Konsole ante un esquema alternativo conflictivo'
+
+# El Dracula externo que coincide con el pin se reutiliza sin reclamarlo.
+rm -f -- "$HOME/.local/share/konsole/Dotfiles-Dracula.colorscheme"
+cp "$TEST_ROOT/Dracula.colorscheme" "$HOME/.local/share/konsole/Dracula.colorscheme"
+printf 'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint\n' > "$MANIFEST_FILE"
+printf 'relative_path\tkind\tproof\tsource\n' > "$OWNERSHIP_FILE"
+printf 'action\tresource\tstate\n' > "$ACTIVE_CYCLE_DIR/restore-journal.tsv"
+rm -f -- "$ACTIVE_CYCLE_DIR/restore.log"
+record_baseline_path '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+record_baseline_path '.local/share/konsole/Dotfiles-Dracula.colorscheme' konsole_colorscheme '-'
+record_baseline_path '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
+record_baseline_path '.config/konsolerc' konsole_config '-'
+configure_konsole personal
+grep -Fxq 'ColorScheme=Dracula' "$HOME/.local/share/konsole/Dotfiles.profile" || fail 'no se reutilizó el Dracula externo idéntico'
+if grep -Fq $'.local/share/konsole/Dracula.colorscheme\tkonsole_colorscheme' "$OWNERSHIP_FILE"; then fail 'se reclamó un Dracula externo idéntico'; fi
 
 printf 'OK: Konsole opt-in, descarga verificada y rollback conservador\n'

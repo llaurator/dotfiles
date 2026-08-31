@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/lib.sh"
+source "$ROOT_DIR/scripts/state.sh"
 source "$ROOT_DIR/scripts/common.sh"
 
 TEST_ROOT="$(mktemp -d)"
@@ -74,5 +75,34 @@ configure_git_identity </dev/null >"$TEST_ROOT/assume-yes.out"
 popd >/dev/null
 [[ "$read_calls" -eq 0 ]] || fail 'el modo --yes intentó leer stdin'
 assert_contains "$TEST_ROOT/assume-yes.out" 'No hay una identidad Git completa; el modo --yes no la configura.'
+
+# Solo un conflicto autorizado y respaldado puede aportar identidad al fichero
+# local no versionado; no se imprime ningún valor durante la migración.
+migrated_home="$TEST_ROOT/migrated-home"
+create_git_home "$migrated_home"
+migration_cycle="$TEST_ROOT/migration-cycle"
+mkdir -p "$migration_cycle/files"
+git config --file "$migration_cycle/files/.gitconfig" user.name 'Backup User'
+git config --file "$migration_cycle/files/.gitconfig" user.email 'backup@example.invalid'
+printf 'relative_path\toriginal_type\tbackup\tmode\tkind\tsource\tbackup_fingerprint\n.gitconfig\tfile\tfiles/.gitconfig\t600\tstow\tgit/.gitconfig\t-\n' > "$migration_cycle/manifest.tsv"
+HOME="$migrated_home"
+ACTIVE_CYCLE_DIR="$migration_cycle"
+MANIFEST_FILE="$migration_cycle/manifest.tsv"
+BASELINE_MODE=active
+BACKUP_CONFLICTS=1
+ASSUME_YES=0
+read_calls=0
+pushd "$migrated_home" >/dev/null
+configure_git_identity </dev/null >"$TEST_ROOT/migrated.out"
+popd >/dev/null
+[[ "$read_calls" -eq 0 ]] || fail 'la identidad completa del backup abrió un prompt'
+[[ "$(git config --file "$migrated_home/.config/git/local.gitconfig" --get user.name)" == 'Backup User' ]] || fail 'no se migró user.name desde el backup'
+[[ "$(git config --file "$migrated_home/.config/git/local.gitconfig" --get user.email)" == 'backup@example.invalid' ]] || fail 'no se migró user.email desde el backup'
+
+# Los valores locales existentes siempre prevalecen sobre el backup.
+git config --file "$migrated_home/.config/git/local.gitconfig" user.name 'Local User'
+git config --file "$migration_cycle/files/.gitconfig" user.name 'Other Backup User'
+configure_git_identity </dev/null >"$TEST_ROOT/migrated-existing.out"
+[[ "$(git config --file "$migrated_home/.config/git/local.gitconfig" --get user.name)" == 'Local User' ]] || fail 'se sobrescribió una identidad local existente'
 
 printf 'OK: detección idempotente de identidad Git\n'

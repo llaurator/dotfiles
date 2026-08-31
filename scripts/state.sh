@@ -271,7 +271,7 @@ validate_manifest() {
         vscode) [[ "$relative" == 'Code/User/settings.json' || "$relative" == */Code/User/settings.json ]] || die 'Ruta de VS Code no válida.' ;;
         vscode_backup) [[ "$relative" == 'Code/User/settings.json.pre-dotfiles' || "$relative" == */Code/User/settings.json.pre-dotfiles ]] || die 'Ruta de backup de VS Code no válida.' ;;
         vscode_locale) [[ "$relative" == 'Code/User/locale.json' || "$relative" == */Code/User/locale.json ]] || die 'Ruta de locale de VS Code no válida.' ;;
-        konsole_colorscheme) [[ "$relative" == '.local/share/konsole/Dracula.colorscheme' ]] || die 'Ruta de esquema Konsole no válida.' ;;
+        konsole_colorscheme) [[ "$relative" == '.local/share/konsole/Dracula.colorscheme' || "$relative" == '.local/share/konsole/Dotfiles-Dracula.colorscheme' ]] || die 'Ruta de esquema Konsole no válida.' ;;
         konsole_profile) [[ "$relative" == '.local/share/konsole/Dotfiles.profile' ]] || die 'Ruta de perfil Konsole no válida.' ;;
         konsole_config) [[ "$relative" == '.config/konsolerc' ]] || die 'Ruta de configuración Konsole no válida.' ;;
       esac
@@ -663,6 +663,7 @@ begin_reversible_install() {
   fi
   if [[ "${REQUEST_CONFIGURE_KONSOLE:-0}" -eq 1 ]]; then
     record_baseline_path '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+    record_baseline_path '.local/share/konsole/Dotfiles-Dracula.colorscheme' konsole_colorscheme '-'
     record_baseline_path '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
     record_baseline_path '.config/konsolerc' konsole_config '-'
   fi

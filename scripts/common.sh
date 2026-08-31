@@ -142,7 +142,7 @@ write_konsole_default_profile() {
   mv -f "$temporary" "$target"
 }
 configure_konsole() {
-  local profile="$1" scheme_dir="$HOME/.local/share/konsole" scheme="$HOME/.local/share/konsole/Dracula.colorscheme"
+  local profile="$1" scheme_dir="$HOME/.local/share/konsole" dracula_scheme="$HOME/.local/share/konsole/Dracula.colorscheme" scheme scheme_name
   local profile_file="$scheme_dir/Dotfiles.profile" konsolerc="$HOME/.config/konsolerc" font_family downloaded install_tmp profile_tmp config_tmp
   local source_url="${DOTFILES_KONSOLE_SOURCE_URL:-https://raw.githubusercontent.com/dracula/konsole/d525667c48b37f76aa28df8968e988ba219d4448/Dracula.colorscheme}"
   local expected_sha256="${DOTFILES_KONSOLE_SHA256:-cd933a4c79b782afc2e91c41f6d4342313b50f115f41b7a2eaf1196e889c5e8b}"
@@ -150,8 +150,21 @@ configure_konsole() {
   command_exists konsole || return 0
   font_family="$(konsole_font_family)" || { warn 'Konsole: no se pudo detectar MesloLGS Nerd Font con fontconfig; no se modifica la configuración.'; return 0; }
   [[ ! -e "$profile_file" && ! -L "$profile_file" ]] || { warn 'Konsole: Dotfiles.profile ya existe y se conserva; no se modifica Konsole.'; return 0; }
-  if [[ -e "$scheme" || -L "$scheme" ]]; then
-    [[ -f "$scheme" && ! -L "$scheme" && "$(sha256_stream < "$scheme")" == "$expected_sha256" ]] || { warn 'Konsole: Dracula.colorscheme ya existe y se conserva; no se modifica Konsole.'; return 0; }
+  scheme="$dracula_scheme"
+  scheme_name=Dracula
+  if [[ -e "$dracula_scheme" || -L "$dracula_scheme" ]]; then
+    if [[ ! -f "$dracula_scheme" || -L "$dracula_scheme" ]]; then
+      warn 'Konsole: Dracula.colorscheme ya existe y se conserva; no se modifica Konsole.'
+      return 0
+    elif [[ "$(sha256_stream < "$dracula_scheme")" != "$expected_sha256" ]]; then
+      scheme="$scheme_dir/Dotfiles-Dracula.colorscheme"
+      scheme_name=Dotfiles-Dracula
+      if [[ -e "$scheme" || -L "$scheme" ]] &&
+         [[ ! -f "$scheme" || -L "$scheme" || "$(sha256_stream < "$scheme")" != "$expected_sha256" ]]; then
+        warn 'Konsole: Dotfiles-Dracula.colorscheme ya existe y difiere; no se modifica Konsole.'
+        return 0
+      fi
+    fi
   fi
   downloaded="$(mktemp "${TMPDIR:-/tmp}/dotfiles-konsole.XXXXXX")" || { warn 'Konsole: no se pudo crear un temporal seguro.'; return 0; }
   if ! curl -fL --proto '=https' --tlsv1.2 -o "$downloaded" "$source_url" || [[ "$(sha256_stream < "$downloaded")" != "$expected_sha256" ]]; then
@@ -160,24 +173,26 @@ configure_konsole() {
     return 0
   fi
   validate_target_containment '.local/share/konsole/Dracula.colorscheme'
+  validate_target_containment '.local/share/konsole/Dotfiles-Dracula.colorscheme'
   validate_target_containment '.local/share/konsole/Dotfiles.profile'
   validate_target_containment '.config/konsolerc'
   mkdir -p "$scheme_dir" "${konsolerc%/*}"
   if [[ ! -e "$scheme" && ! -L "$scheme" ]]; then
-    install_tmp="$(mktemp "$scheme_dir/.Dracula.colorscheme.dotfiles.XXXXXX")" || { rm -f -- "$downloaded"; die 'Konsole: no se pudo preparar la instalación atómica del esquema.'; }
+    install_tmp="$(mktemp "$scheme_dir/.${scheme_name}.colorscheme.dotfiles.XXXXXX")" || { rm -f -- "$downloaded"; die 'Konsole: no se pudo preparar la instalación atómica del esquema.'; }
     if ! cp "$downloaded" "$install_tmp" || ! chmod 644 "$install_tmp" || ! mv -f "$install_tmp" "$scheme"; then
       rm -f -- "$downloaded" "$install_tmp"
-      die 'Konsole: no se pudo instalar Dracula.colorscheme.'
+      die 'Konsole: no se pudo instalar el esquema de color.'
     fi
   fi
   rm -f -- "$downloaded"
   profile_tmp="$(mktemp "$scheme_dir/.Dotfiles.profile.dotfiles.XXXXXX")" || die 'Konsole: no se pudo preparar el perfil.'
-  printf '[Appearance]\nColorScheme=Dracula\nFont=%s,10,-1,5,50,0,0,0,0,0\n\n[General]\nName=Dotfiles\n' "$font_family" > "$profile_tmp"
+  printf '[Appearance]\nColorScheme=%s\nFont=%s,10,-1,5,50,0,0,0,0,0\n\n[General]\nName=Dotfiles\n' "$scheme_name" "$font_family" > "$profile_tmp"
   chmod 644 "$profile_tmp"
   mv -f "$profile_tmp" "$profile_file" || { rm -f -- "$profile_tmp"; die 'Konsole: no se pudo instalar Dotfiles.profile.'; }
   config_tmp="$(mktemp "${konsolerc%/*}/.konsolerc.dotfiles.XXXXXX")" || die 'Konsole: no se pudo preparar konsolerc.'
   write_konsole_default_profile "$konsolerc" "$konsolerc" "$config_tmp" || { rm -f -- "$config_tmp"; die 'Konsole: no se pudo actualizar el perfil predeterminado.'; }
   mark_path_if_changed '.local/share/konsole/Dracula.colorscheme' konsole_colorscheme '-'
+  mark_path_if_changed '.local/share/konsole/Dotfiles-Dracula.colorscheme' konsole_colorscheme '-'
   mark_path_if_changed '.local/share/konsole/Dotfiles.profile' konsole_profile '-'
   mark_path_if_changed '.config/konsolerc' konsole_config '-'
   success 'Konsole configurado con Dracula y MesloLGS Nerd Font para nuevas ventanas/sesiones.'
@@ -274,7 +289,24 @@ deploy_stow_packages(){
   fi
 }
 configure_git_identity() {
-  local git_name git_email answer name email local_config
+  local git_name git_email answer name email local_config backup backup_name backup_email
+  local_config="$HOME/.config/git/local.gitconfig"
+  if [[ "${BACKUP_CONFLICTS:-0}" -eq 1 && "${BASELINE_MODE:-}" == active ]] && manifest_has_path '.gitconfig' &&
+     [[ "$(manifest_field '.gitconfig' 2)" == file ]]; then
+    backup="$ACTIVE_CYCLE_DIR/$(manifest_field '.gitconfig' 3)"
+    if [[ -f "$backup" && ! -L "$backup" ]]; then
+      backup_name="$(git config --file "$backup" --get user.name 2>/dev/null || true)"
+      backup_email="$(git config --file "$backup" --get user.email 2>/dev/null || true)"
+      git_name="$(git config --file "$local_config" --get user.name 2>/dev/null || true)"
+      git_email="$(git config --file "$local_config" --get user.email 2>/dev/null || true)"
+      if [[ -n "$backup_name" && -z "$git_name" ]] || [[ -n "$backup_email" && -z "$git_email" ]]; then
+        mkdir -p "${local_config%/*}"
+        if [[ -z "$git_name" && -n "$backup_name" ]]; then git config --file "$local_config" user.name "$backup_name"; fi
+        if [[ -z "$git_email" && -n "$backup_email" ]]; then git config --file "$local_config" user.email "$backup_email"; fi
+        chmod 600 "$local_config"
+      fi
+    fi
+  fi
   git_name="$(git config --get user.name 2>/dev/null || true)"
   git_email="$(git config --get user.email 2>/dev/null || true)"
   if [[ -n "$git_name" && -n "$git_email" ]]; then
@@ -307,7 +339,6 @@ configure_git_identity() {
         fi
         [[ -n "$email" ]] || warn 'El email no puede estar vacío.'
       done
-      local_config="$HOME/.config/git/local.gitconfig"
       mkdir -p "${local_config%/*}"
       [[ -n "$git_name" ]] || git config --file "$local_config" user.name "$name"
       [[ -n "$git_email" ]] || git config --file "$local_config" user.email "$email"
@@ -323,9 +354,60 @@ vscode_file_mode() {
     linux) stat -c '%a' "$1" ;;
   esac
 }
+jsonc_to_json() {
+  local source="$1" target="$2" comments="$3" stripped
+  stripped="${target}.stripped"
+  : > "$comments"
+  awk -v comments="$comments" '
+    function put_comment() { print comment >> comments; comment="" }
+    {
+      line=$0 "\n"
+      for (i = 1; i <= length(line); i++) {
+        c=substr(line,i,1); n=substr(line,i+1,1)
+        if (line_comment) {
+          comment=comment c
+          if (c == "\n") { put_comment(); line_comment=0; printf "\n" }
+          continue
+        }
+        if (block_comment) {
+          comment=comment c
+          if (c == "*" && n == "/") { comment=comment n; i++; put_comment(); block_comment=0; printf "  "; continue }
+          if (c == "\n") printf "\n"; else printf " "
+          continue
+        }
+        if (in_string) {
+          printf "%s", c
+          if (escaped) escaped=0
+          else if (c == "\\") escaped=1
+          else if (c == "\"") in_string=0
+          continue
+        }
+        if (c == "\"") { in_string=1; printf "%s", c; continue }
+        if (c == "/" && n == "/") { comment="//"; i++; line_comment=1; printf "  "; continue }
+        if (c == "/" && n == "*") { comment="/*"; i++; block_comment=1; printf "  "; continue }
+        printf "%s", c
+      }
+    }
+    END { if (in_string || block_comment || line_comment) exit 1 }
+  ' "$source" > "$stripped" || { rm -f -- "$stripped"; return 1; }
+  awk '
+    { text = text $0 "\n" }
+    END {
+      for (i = 1; i <= length(text); i++) {
+        c=substr(text,i,1)
+        if (c == ",") {
+          j=i+1; while (j <= length(text) && substr(text,j,1) ~ /[[:space:]]/) j++
+          if (substr(text,j,1) == "}" || substr(text,j,1) == "]") continue
+        }
+        printf "%s", c
+      }
+    }
+  ' "$stripped" > "$target"
+  rm -f -- "$stripped"
+}
 merge_vscode_settings() {
   local settings_source="$1" settings_target="$2"
-  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode
+  local settings_dir backup="${3:-$settings_target.pre-dotfiles}" label="${4:-settings.json}" temporary mode local_json comments merged_json
   settings_dir="${settings_target%/*}"
   mkdir -p "$settings_dir"
 
@@ -334,8 +416,11 @@ merge_vscode_settings() {
     return 1
   fi
   if [[ -e "$settings_target" || -L "$settings_target" ]]; then
-    if ! jq -e 'type == "object"' "$settings_target" >/dev/null 2>&1; then
-      warn "VS Code: JSON local inválido; no se modifica: $settings_target"
+    local_json="$(mktemp "${TMPDIR:-/tmp}/dotfiles-jsonc.XXXXXX")" || return 1
+    comments="$(mktemp "${TMPDIR:-/tmp}/dotfiles-jsonc-comments.XXXXXX")" || { rm -f -- "$local_json"; return 1; }
+    if ! jsonc_to_json "$settings_target" "$local_json" "$comments" || ! jq -e 'type == "object"' "$local_json" >/dev/null 2>&1; then
+      rm -f -- "$local_json" "$comments"
+      warn "VS Code: JSONC local inválido; no se modifica: $settings_target"
       return 1
     fi
   fi
@@ -345,12 +430,15 @@ merge_vscode_settings() {
     return 1
   }
   if [[ -e "$settings_target" || -L "$settings_target" ]]; then
-    if ! jq -S -s '.[0] * .[1]' "$settings_target" "$settings_source" > "$temporary" ||
-       ! jq -e 'type == "object"' "$temporary" >/dev/null 2>&1; then
-      rm -f "$temporary"
+    merged_json="${temporary}.json"
+    if ! jq -S -s '.[0] * .[1]' "$local_json" "$settings_source" > "$merged_json" ||
+       ! jq -e 'type == "object"' "$merged_json" >/dev/null 2>&1 ||
+       ! { cat "$comments"; cat "$merged_json"; } > "$temporary"; then
+      rm -f "$temporary" "$merged_json" "$local_json" "$comments"
       warn 'VS Code: no se pudo generar un merge JSON válido; los settings locales no se modifican.'
       return 1
     fi
+    rm -f -- "$merged_json" "$local_json" "$comments"
     mode="$(vscode_file_mode "$settings_target")" || {
       rm -f "$temporary"
       warn "VS Code: no se pudieron consultar los permisos de $settings_target"
