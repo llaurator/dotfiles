@@ -27,34 +27,86 @@ curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.s
 ### Install without sudo
 
 Use `--user-only` when the administrator has already installed `git`, `stow`,
-`zsh` and `jq`. Missing dependencies abort before cloning or creating a baseline.
-No system packages, sudo, or shell changes are attempted; missing optional tools
-are reported. Zsh components, Stow, Git and the selected profile are configured
-normally. `--install-vscode` cannot be combined with this mode; existing VS Code
-is still configured. On macOS, fonts are downloaded into `~/Library/Fonts`.
+`zsh` and `jq`. If any of these required dependencies are missing, installation
+aborts before cloning the repository or creating a baseline.
 
-On Debian, the administrator runs as root:
+In this mode, no system packages are installed, `sudo` is never used, and the
+user's login shell is not changed. Missing optional tools are reported as
+warnings but do not prevent installation.
+
+Zsh components, Stow, Git and the selected profile are configured normally.
+`--install-vscode` cannot be combined with this mode, although an existing
+VS Code installation is still configured. On macOS, fonts are downloaded
+directly into `~/Library/Fonts`.
+
+On Debian, the administrator can first install the minimum required
+dependencies as root:
 
 ```sh
 apt update
 apt install -y git stow zsh jq
-chsh -s /usr/bin/zsh <usuario>
 ```
 
-Replace `<usuario>` with the account to configure. Then, as your user, without sudo:
+To enable all dotfiles features, installing the recommended tools is also
+suggested:
+
+```sh
+apt install -y \
+  fzf \
+  fd-find \
+  zoxide \
+  bat \
+  ripgrep \
+  btop \
+  grc \
+  direnv \
+  lsd
+```
+
+The shell prefers `eza` when available, uses `lsd` otherwise, and keeps the
+standard `ls` if neither is installed. With `eza`, `ll` shows both owner and
+group. Normal Debian installation chooses `eza` from configured repositories
+when available, then `lsd`; neither is required for `--user-only`.
+
+Optionally, the administrator can set Zsh as the user's login shell:
+
+```sh
+chsh -s /usr/bin/zsh <user>
+```
+
+Replace `<user>` with the account you want to configure.
+
+Then, as that user and without sudo:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
   | bash -s -- --profile server --yes --user-only
 ```
 
-For an existing checkout: `./install.sh --profile server --yes --user-only`.
-Normal installation never silently falls back to this mode. It validates
-privileges before creating a baseline. Bootstrap failures remove only a new,
-unchanged clone when safe; existing repositories and local changes are preserved.
-If installation has created state, the checkout is retained for the existing
-`./install.sh --uninstall` recovery workflow, which verifies ownership before
-restoring files. `--user-only` is an installation option, not an uninstall option.
+For an existing checkout:
+
+```sh
+./install.sh --profile server --yes --user-only
+```
+
+Normal installation never silently falls back to `--user-only`. It validates
+the required privileges before creating a baseline.
+
+If bootstrap fails, only a new clone created by that same execution is removed
+automatically when it is safe to do so. Existing repositories and local changes
+are always preserved.
+
+If installation has already created reversible state, the checkout is kept so
+the existing recovery workflow remains available:
+
+```sh
+./install.sh --uninstall
+```
+
+This process verifies file ownership before restoring files.
+
+`--user-only` is an installation option only; it does not apply to the
+uninstallation process.
 
 ### Inspect first (recommended)
 

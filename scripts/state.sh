@@ -1015,7 +1015,10 @@ show_dotfiles_status() {
     printf '  Konsole: ✓ Dracula / Dotfiles.profile\n'
   fi
   printf '\nTools:\n'
-  for package in zsh stow fzf zoxide eza bat rg btop grc direnv; do if command_exists "$package"; then printf '  ✓ %s\n' "$package"; else printf '  - %s\n' "$package"; fi; done
+  for package in zsh stow fzf zoxide bat rg btop grc direnv; do if command_exists "$package"; then printf '  ✓ %s\n' "$package"; else printf '  - %s\n' "$package"; fi; done
+  if command_exists eza; then printf '  ✓ eza\n'
+  elif command_exists lsd; then printf '  ✓ lsd\n'
+  else printf '  - eza/lsd\n'; fi
 }
 
 # Environment rollback (baseline format 2).  Format 1 deliberately never enters

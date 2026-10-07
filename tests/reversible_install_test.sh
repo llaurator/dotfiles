@@ -322,10 +322,13 @@ assert_file_content "$home_j/.zsh_history" 'zsh history'
 # L: una identidad creada por este ciclo se retira si continúa sin cambios.
 home_l="$TEST_ROOT/home-l"
 prepare_home "$home_l"
+cp "$FIXTURE_REPO/git/.gitconfig" "$TEST_ROOT/gitconfig-with-identity"
+git config --file "$FIXTURE_REPO/git/.gitconfig" --remove-section user
 run_install_with_input "$home_l" '\ns\nTest User\ntest@example.invalid\n' "$home_l/install.out" --profile server
 [[ -f "$home_l/.config/git/local.gitconfig" ]] || fail 'no se creó la identidad Git local'
 run_install "$home_l" "$home_l/uninstall.out" --uninstall --yes
 [[ ! -e "$home_l/.config/git/local.gitconfig" ]] || fail 'no se retiró la identidad creada por la instalación'
+cp "$TEST_ROOT/gitconfig-with-identity" "$FIXTURE_REPO/git/.gitconfig"
 
 # P: una instalación antigua no fabrica baseline; status lo indica y uninstall solo retira enlaces.
 home_p="$TEST_ROOT/home-p"

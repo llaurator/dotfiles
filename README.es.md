@@ -24,6 +24,92 @@ curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.s
   | bash -s -- --profile server --yes
 ```
 
+### Instalación sin sudo
+
+Usa `--user-only` cuando el administrador ya haya instalado `git`, `stow`,
+`zsh` y `jq`. Si falta alguna de estas dependencias obligatorias, la instalación
+se aborta antes de clonar el repositorio o crear una baseline.
+
+En este modo no se instalan paquetes del sistema, no se utiliza `sudo` y no se
+intenta cambiar el shell de inicio de sesión del usuario. Las herramientas
+opcionales que falten se mostrarán como aviso, pero no impedirán continuar.
+
+Los componentes de Zsh, Stow, Git y el perfil seleccionado se configuran con
+normalidad. `--install-vscode` no puede combinarse con este modo, aunque una
+instalación existente de VS Code sí se configurará. En macOS, las fuentes se
+descargan directamente en `~/Library/Fonts`.
+
+En Debian, el administrador puede instalar primero las dependencias mínimas
+necesarias como root:
+
+```sh
+apt update
+apt install -y git stow zsh jq
+```
+
+Para disponer de todas las funciones de los dotfiles, se recomienda instalar
+también:
+
+```sh
+apt install -y \
+  fzf \
+  fd-find \
+  zoxide \
+  bat \
+  ripgrep \
+  btop \
+  grc \
+  direnv \
+  lsd
+```
+
+El shell prefiere `eza` cuando está disponible, recurre a `lsd` en su ausencia
+y conserva el `ls` estándar si no hay ninguno. Con `eza`, `ll` muestra tanto
+el propietario como el grupo. La instalación normal de Debian elige `eza` de
+los repositorios configurados si está disponible y, en caso contrario, `lsd`;
+ninguno es obligatorio para `--user-only`.
+
+Opcionalmente, el administrador puede establecer Zsh como shell de inicio de
+sesión:
+
+```sh
+chsh -s /usr/bin/zsh <usuario>
+```
+
+Sustituye `<usuario>` por la cuenta que quieras configurar.
+
+Después, como ese usuario y sin sudo:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
+  | bash -s -- --profile server --yes --user-only
+```
+
+Para un repositorio ya clonado:
+
+```sh
+./install.sh --profile server --yes --user-only
+```
+
+La instalación normal nunca cambia silenciosamente a `--user-only`. Primero
+valida los privilegios necesarios antes de crear una baseline.
+
+Si el bootstrap falla, solo se elimina automáticamente un clon nuevo creado en
+esa misma ejecución cuando sea seguro hacerlo. Los repositorios preexistentes y
+los cambios locales se conservan siempre.
+
+Si la instalación ya ha creado estado reversible, el repositorio se mantiene
+para permitir la recuperación mediante el flujo existente:
+
+```sh
+./install.sh --uninstall
+```
+
+Este proceso verifica la propiedad de los archivos antes de restaurarlos.
+
+`--user-only` es únicamente una opción de instalación; no se aplica al proceso
+de desinstalación.
+
 ### Inspeccionar antes (recomendado)
 
 Descarga e inspecciona el script bootstrap antes de ejecutarlo:

@@ -27,7 +27,7 @@ meslo_nerd_font_available() {
 }
 upstream_component_status() { local name="$1" component="$2" state; IFS=$'\t' read -r state _ < <(resolve_zsh_component "$component"); case "$state" in managed) printf '  ✓ %s (gestionado)\n' "$name";; external) printf '  ✓ %s (externo)\n' "$name";; missing) printf '  + %s (pendiente)\n' "$name";; esac; }
 print_install_preflight() {
-  local profile="$1" package
+  local profile="$1" package listing_package
   get_system_packages
   printf '%sPreflight (solo lectura):%s\n' "$BOLD" "$RESET"
   if [[ "${USER_ONLY:-0}" -eq 1 ]]; then
@@ -35,8 +35,18 @@ print_install_preflight() {
   else
     printf '\nPaquetes:\n'
     for package in "${SYSTEM_PACKAGES[@]}"; do
+      if [[ "$DOTFILES_DISTRO" == debian && ( "$package" == eza || "$package" == lsd ) ]]; then continue; fi
       if package_is_installed "$package"; then printf '  ✓ %s (ya instalado)\n' "$package"; else printf '  + %s\n' "$package"; fi
     done
+    if [[ "$DOTFILES_DISTRO" == debian ]]; then
+      listing_package="$(debian_listing_package)"
+      if [[ -n "$listing_package" ]]; then
+        if command_exists "$listing_package"; then printf '  ✓ %s (listado mejorado disponible)\n' "$listing_package"
+        else printf '  + %s (listado mejorado opcional)\n' "$listing_package"; fi
+      else
+        printf '  - eza/lsd no disponibles; se conservará ls\n'
+      fi
+    fi
   fi
   printf '\nSe configurará:\n  • Zsh\n  • Git\n  • dotfiles con Stow\n'
   [[ "$profile" == server ]] || printf '  • SSH cliente\n  • VS Code si está disponible\n'
@@ -719,7 +729,7 @@ ensure_zsh_shell(){
 print_user_only_tools() {
   local tool binary
   printf '\n--user-only: dependencias obligatorias disponibles; no se instalarán paquetes.\n'
-  for tool in fzf fd zoxide bat ripgrep btop grc direnv eza git-delta; do
+  for tool in fzf fd zoxide bat ripgrep btop grc direnv git-delta; do
     binary="$tool"
     case "$tool" in
       ripgrep) binary=rg ;;
@@ -729,6 +739,9 @@ print_user_only_tools() {
     esac
     command_exists "$binary" || warn "Opcional ausente: $tool (se continúa sin instalarlo)."
   done
+  if ! command_exists eza && ! command_exists lsd; then
+    warn 'Opcional ausente: herramienta de listado mejorado (eza o lsd); se usará ls.'
+  fi
 }
 
 install_user_command_aliases() {

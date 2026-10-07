@@ -83,6 +83,16 @@ rm "$FORBIDDEN_LOG"
 for profile in server personal work; do
   home="$TEST_ROOT/$profile"
   mkdir "$home"
+  if [[ "$profile" == server ]]; then
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/lsd"
+    chmod +x "$bin/lsd"
+  elif [[ "$profile" == personal ]]; then
+    rm -f "$bin/lsd"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/eza"
+    chmod +x "$bin/eza"
+  else
+    rm -f "$bin/lsd" "$bin/eza"
+  fi
   # Debian command aliases must be optional and reversible.
   for name in fdfind batcat; do printf '#!/usr/bin/env bash\nexit 0\n' > "$bin/$name"; chmod +x "$bin/$name"; done
   run_install --profile "$profile" --yes --user-only > "$TEST_ROOT/$profile.out" 2>&1 || { cat "$TEST_ROOT/$profile.out"; fail "$profile installation"; }
@@ -90,6 +100,11 @@ for profile in server personal work; do
   [[ -f "$home/.oh-my-zsh/oh-my-zsh.sh" && -f "$home/.config/dotfiles/zsh-components.zsh" ]] || fail 'componentes Zsh incompletos'
   [[ -L "$home/.local/bin/fd" && -L "$home/.local/bin/bat" ]] || fail 'faltan alias Debian'
   grep -Fq 'Opcional ausente: fzf' "$TEST_ROOT/$profile.out" || fail 'no informa opcionales'
+  if [[ "$profile" != work ]]; then
+    if grep -Fq 'herramienta de listado mejorado' "$TEST_ROOT/$profile.out"; then fail 'eza o lsd disponibles generaron aviso de listado'; fi
+  else
+    grep -Fq 'herramienta de listado mejorado' "$TEST_ROOT/$profile.out" || fail 'no avisó de la ausencia de eza y lsd'
+  fi
   grep -Fq 'Zsh no es el shell de login actual' "$TEST_ROOT/$profile.out" || fail 'no informa shell'
   cycle="$home/.state/dotfiles/cycles/$(cat "$home/.state/dotfiles/active")"
   [[ "$(wc -l < "$cycle/packages.tsv")" -eq 1 ]] || fail 'atribuyó paquetes de sistema'

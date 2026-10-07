@@ -144,11 +144,18 @@ sshs() {
 
 if command -v eza >/dev/null 2>&1; then
   alias ls='eza --icons=auto --group-directories-first'
-  alias ll='eza -lah --icons=auto --group-directories-first --git --header'
+  alias ll='eza -la --icons=auto --group-directories-first --git --header --group'
   alias la='eza -a --icons=auto --group-directories-first'
   alias lt='eza --tree --icons=auto --group-directories-first --level=2'
   alias lta='eza --tree --icons=auto --group-directories-first --level=3 -a'
   alias tree='eza --tree --icons=auto --group-directories-first'
+elif command -v lsd >/dev/null 2>&1; then
+  alias ls='lsd --icon auto --group-dirs first'
+  alias ll='lsd -la --icon auto --group-dirs first --git --header --blocks permission,user,group,size,date,name,git'
+  alias la='lsd -a --icon auto --group-dirs first'
+  alias lt='lsd --tree --icon auto --group-dirs first --depth 2'
+  alias lta='lsd --tree -a --icon auto --group-dirs first --depth 3'
+  alias tree='lsd --tree --icon auto --group-dirs first'
 fi
 if command -v bat >/dev/null 2>&1; then alias b='bat'; alias bp='bat --plain'; alias catp='bat --plain'; fi
 if command -v rg >/dev/null 2>&1; then alias rgf='rg --files'; alias rgi='rg -i'; alias rgh='rg --hidden'; alias rga='rg --hidden --glob "!.git/*"'; fi
