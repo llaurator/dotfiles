@@ -2,6 +2,16 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.6.0](https://github.com/llaurator/dotfiles/compare/v1.5.0...v1.6.0) (2026-10-07)
+
+### ✨ Features
+
+* add unprivileged user-only install mode ([b7fc99e](https://github.com/llaurator/dotfiles/commit/b7fc99e776ec8d60744e34fbba375ee9c8c69840))
+
+### 🧹 Chores
+
+* **git:** use GitHub noreply email ([2ab8e71](https://github.com/llaurator/dotfiles/commit/2ab8e7107b45b21b3d6dd811e100c721cf74e36d))
+
 ## [1.5.0](https://github.com/llaurator/dotfiles/compare/v1.4.3...v1.5.0) (2026-10-07)
 
 ### ✨ Features
