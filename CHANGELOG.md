@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.6.1](https://github.com/llaurator/dotfiles/compare/v1.6.0...v1.6.1) (2026-10-07)
+
+### 🐛 Fixes
+
+* **debian:** fall back to lsd when eza is unavailable ([14b1805](https://github.com/llaurator/dotfiles/commit/14b1805d65b0838979c2b7deffc1d3488fc83523))
+
 ## [1.6.0](https://github.com/llaurator/dotfiles/compare/v1.5.0...v1.6.0) (2026-10-07)
 
 ### ✨ Features
