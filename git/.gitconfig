@@ -23,3 +23,6 @@
 
 [include]
     path = ~/.config/git/local.gitconfig
+[user]
+	email = 29285647+llaurator@users.noreply.github.com
+	name = llaurator
