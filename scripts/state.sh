@@ -256,7 +256,7 @@ validate_manifest() {
        -n "$kind" && -n "$source" && -n "$backup_fingerprint" && -z "$extra" ]] || die 'Entrada de manifest corrupta.'
     validate_target_containment "$relative"
     case "$original_type" in missing|file|directory|symlink) ;; *) die 'Tipo original no válido en manifest.' ;; esac
-    case "$kind" in stow|profile|git|zsh_components|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
+    case "$kind" in stow|command_alias|profile|git|zsh_components|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config) ;; *) die 'Tipo gestionado no válido en manifest.' ;; esac
     if [[ "$kind" == stow ]]; then
       validate_relative_path "$source" || die 'Source Stow no válido en manifest.'
       package="${source%%/*}"
@@ -266,6 +266,7 @@ validate_manifest() {
     else
       [[ "$source" == '-' ]] || die 'Source inesperado en manifest.'
       case "$kind" in
+        command_alias) [[ "$relative" == .local/bin/fd || "$relative" == .local/bin/bat ]] || die 'Ruta de alias no válida.' ;;
         profile) [[ "$relative" == '.config/dotfiles/profile' ]] || die 'Ruta de perfil no válida.' ;;
         zsh_components) [[ "$relative" == '.config/dotfiles/zsh-components.zsh' ]] || die 'Ruta de componentes Zsh no válida.' ;;
         git) [[ "$relative" == '.config/git/local.gitconfig' ]] || die 'Ruta de identidad Git no válida.' ;;
@@ -312,7 +313,7 @@ validate_ownership() {
         [[ "$proof" == pending || "$proof" =~ ^symlink:[0-9a-f]{64}:[0-9]+$ ]] || die 'Prueba Stow no válida.'
         validate_relative_path "$source" || die 'Source Stow no válido.'
         ;;
-      profile|git|zsh_components|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config)
+      command_alias|profile|git|zsh_components|vscode|vscode_backup|vscode_locale|konsole_colorscheme|konsole_profile|konsole_config)
         [[ "$source" == '-' && "$proof" =~ ^file:[0-9a-f]{64}:[0-9]+:[0-7]{3,4}$|^symlink:[0-9a-f]{64}:[0-9]+$|^directory:[0-9a-f]{64}:[0-7]{3,4}$ ]] ||
           die 'Prueba de propiedad no válida.'
         ;;
@@ -568,8 +569,14 @@ is_conflict_relative() {
 }
 
 prepare_reversible_install() {
-  local profile="$1" index target source
+  local profile="$1" index target source login_shell
   validate_home_and_state
+  # These requirements are also enforced by baseline validation. Fail before
+  # creating a cycle or moving any conflict into its backup.
+  login_shell="$(current_login_shell)"
+  [[ -z "$login_shell" ]] || is_valid_login_shell "$login_shell" || die 'Shell previo de la baseline no válido.'
+  command_exists sha256sum || command_exists shasum || die 'Se necesita sha256sum o shasum para verificar la baseline.'
+  vscode_managed_relatives "$profile"
   stow_packages_for_profile "$profile"
   collect_stow_entries
   CONFLICT_RELS=()
@@ -1074,7 +1081,7 @@ record_shell_changed() {
 
 record_relevant_directories() {
   local rel target existed type mode
-  local -a dirs=(.config .config/zsh .config/dotfiles .config/dotfiles/vscode .config/btop .config/Code .config/Code/User .ssh .ssh/config.d .local .local/share .local/share/fonts)
+  local -a dirs=(.local/bin Library Library/Fonts .config .config/zsh .config/dotfiles .config/dotfiles/vscode .config/btop .config/Code .config/Code/User .ssh .ssh/config.d .local .local/share .local/share/fonts)
   for rel in "${dirs[@]}"; do
     target="$HOME/$rel"; existed=no; type=missing; mode=-
     if [[ -e "$target" || -L "$target" ]]; then existed=yes; type="$(path_type "$target")"; [[ "$type" == directory ]] && mode="$(path_mode "$target")"; fi
@@ -1364,7 +1371,7 @@ validate_environment_manifest() {
   while IFS=$'\t' read -r name rel existed origin commit extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$origin" == https://github.com/* && -z "$extra" ]] || die 'Entrada upstream corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/upstream.tsv")
   while IFS=$'\t' read -r rel existed type mode installed_mode extra; do validate_target_containment "$rel"; [[ "$existed" =~ ^(yes|no)$ && "$type" =~ ^(missing|directory|file|symlink|unsupported)$ && -n "$mode" && -n "$installed_mode" && -z "$extra" ]] || die 'Entrada de directorio corrupta.'; done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/directories.tsv")
   while IFS=$'\t' read -r rel before after extra; do
-    if [[ "$rel" == homebrew-cask:* ]]; then [[ "$rel" == homebrew-cask:font-meslo-lg-nerd-font ]]; else validate_target_containment "$rel"; [[ "$rel" == .local/share/fonts/MesloLGSNerdFont-*.ttf ]]; fi
+    if [[ "$rel" == homebrew-cask:* ]]; then [[ "$rel" == homebrew-cask:font-meslo-lg-nerd-font ]]; else validate_target_containment "$rel"; [[ "$rel" == .local/share/fonts/MesloLGSNerdFont-*.ttf || "$rel" == Library/Fonts/MesloLGSNerdFont-*.ttf ]]; fi
     [[ -n "$before" && -n "$after" && -z "$extra" ]] || die 'Entrada de fuente corrupta.'
   done < <(sed -n '2,$p' "$ACTIVE_CYCLE_DIR/fonts.tsv")
   validate_package_transactions

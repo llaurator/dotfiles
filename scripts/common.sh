@@ -30,10 +30,14 @@ print_install_preflight() {
   local profile="$1" package
   get_system_packages
   printf '%sPreflight (solo lectura):%s\n' "$BOLD" "$RESET"
-  printf '\nPaquetes:\n'
-  for package in "${SYSTEM_PACKAGES[@]}"; do
-    if package_is_installed "$package"; then printf '  ✓ %s (ya instalado)\n' "$package"; else printf '  + %s\n' "$package"; fi
-  done
+  if [[ "${USER_ONLY:-0}" -eq 1 ]]; then
+    print_user_only_tools
+  else
+    printf '\nPaquetes:\n'
+    for package in "${SYSTEM_PACKAGES[@]}"; do
+      if package_is_installed "$package"; then printf '  ✓ %s (ya instalado)\n' "$package"; else printf '  + %s\n' "$package"; fi
+    done
+  fi
   printf '\nSe configurará:\n  • Zsh\n  • Git\n  • dotfiles con Stow\n'
   [[ "$profile" == server ]] || printf '  • SSH cliente\n  • VS Code si está disponible\n'
   printf '\nUpstream Zsh:\n'
@@ -61,6 +65,7 @@ print_install_preflight() {
 select_vscode_install() {
   local profile="$1" answer prompt
   REQUEST_INSTALL_VSCODE=0
+  [[ "${USER_ONLY:-0}" -ne 1 ]] || return 0
   [[ "$profile" != server ]] || return 0
   command_exists code && return 0
   if [[ "$DOTFILES_DISTRO" == debian ]]; then
@@ -208,7 +213,7 @@ install_nerd_font() {
     success "$font_family ya está disponible mediante fontconfig; se conserva como externa."
     return 0
   fi
-  if [[ "$DOTFILES_OS" == macos ]]; then
+  if [[ "$DOTFILES_OS" == macos && "${USER_ONLY:-0}" -eq 0 ]]; then
     if brew list --cask font-meslo-lg-nerd-font >/dev/null 2>&1; then
       [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -q '^homebrew-cask:' "$ACTIVE_CYCLE_DIR/fonts.tsv" && printf 'homebrew-cask:font-meslo-lg-nerd-font\talready_present\t-\n' >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
       MESLO_FONT_FAMILY='MesloLGS Nerd Font'; MESLO_FONT_ORIGIN=system
@@ -218,14 +223,17 @@ install_nerd_font() {
     [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf 'homebrew-cask:font-meslo-lg-nerd-font\tmissing\tinstalled_by_cycle\n' >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
   else
     command_exists curl || { warn 'No se encontró curl; no se pudo instalar MesloLGS Nerd Font.'; return; }
-    font_dir="$HOME/.local/share/fonts"; mkdir -p "$font_dir"
+    font_dir="$HOME/.local/share/fonts"
+    if [[ "$DOTFILES_OS" == macos ]]; then font_dir="$HOME/Library/Fonts"; fi
+    validate_target_containment "${font_dir#"$HOME/"}/MesloLGSNerdFont-Regular.ttf"
+    mkdir -p "$font_dir"
     tmp_dir="$(mktemp -d "$font_dir/.meslo-dotfiles.XXXXXX")" || return 1
     for name in Regular Bold Italic BoldItalic; do
       target="$font_dir/MesloLGSNerdFont-$name.ttf"; before=missing; [[ -e "$target" ]] && before="$(path_fingerprint "$target")"
       if [[ "$before" == missing ]]; then
         missing_fonts+=("$name")
-      elif [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -Fq ".local/share/fonts/${target##*/}" "$ACTIVE_CYCLE_DIR/fonts.tsv"; then
-        printf '%s\t%s\t%s\n' ".local/share/fonts/${target##*/}" "$before" "$before" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+      elif [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && ! grep -Fq "${target#"$HOME/"}" "$ACTIVE_CYCLE_DIR/fonts.tsv"; then
+        printf '%s\t%s\t%s\n' "${target#"$HOME/"}" "$before" "$before" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
       fi
     done
     for name in "${missing_fonts[@]}"; do
@@ -253,7 +261,7 @@ install_nerd_font() {
       target="$font_dir/MesloLGSNerdFont-$name.ttf"
       mv "$tmp_dir/MesloLGSNerdFont-$name.ttf" "$target"
       fingerprint="$(path_fingerprint "$target")"
-      [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf '%s\tmissing\t%s\n' ".local/share/fonts/${target##*/}" "$fingerprint" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
+      [[ "$BASELINE_MODE" == active && "$BASELINE_FORMAT" == 2 ]] && printf '%s\tmissing\t%s\n' "${target#"$HOME/"}" "$fingerprint" >> "$ACTIVE_CYCLE_DIR/fonts.tsv"
     done
     rm -rf -- "$tmp_dir"
     if command_exists fc-cache; then fc-cache -f "$font_dir" >/dev/null 2>&1 || warn 'fontconfig no pudo actualizar la caché de usuario.'; else warn 'fontconfig no está disponible; actualiza la caché de fuentes manualmente.'; fi
@@ -682,6 +690,17 @@ ensure_zsh_shell(){
   local zsh_path current
   if [[ "$DOTFILES_OS" == macos && -x /bin/zsh ]]; then zsh_path=/bin/zsh; else zsh_path="$(command -v zsh || true)"; fi
   [[ -n "$zsh_path" ]] || { warn 'No se ha encontrado zsh.'; return; }
+  current="$(current_login_shell)"
+  if [[ "${USER_ONLY:-0}" -eq 1 ]]; then
+    if [[ "$current" == */zsh ]]; then
+      success 'Zsh ya es el shell de login.'
+    else
+      warn 'Zsh no es el shell de login actual.'
+      printf '  Puedes intentar: chsh -s %q\n' "$zsh_path"
+      printf '  Si tu cuenta no puede cambiarlo, pide al administrador: chsh -s %q %q\n' "$zsh_path" "$(id -un)"
+    fi
+    return 0
+  fi
   if ! is_valid_login_shell "$zsh_path"; then
     warn "La ruta de Zsh no es un shell de login válido y no se modificará: $zsh_path"
     return
@@ -695,4 +714,36 @@ ensure_zsh_shell(){
     info 'El cambio será efectivo al iniciar una nueva sesión de usuario.'
     printf '  Para usar Zsh ahora en esta terminal: exec zsh\n'
   else warn "Ejecuta manualmente: chsh -s $zsh_path"; fi
+}
+
+print_user_only_tools() {
+  local tool binary
+  printf '\n--user-only: dependencias obligatorias disponibles; no se instalarán paquetes.\n'
+  for tool in fzf fd zoxide bat ripgrep btop grc direnv eza git-delta; do
+    binary="$tool"
+    case "$tool" in
+      ripgrep) binary=rg ;;
+      git-delta) binary=delta ;;
+      fd) command_exists fd || binary=fdfind ;;
+      bat) command_exists bat || binary=batcat ;;
+    esac
+    command_exists "$binary" || warn "Opcional ausente: $tool (se continúa sin instalarlo)."
+  done
+}
+
+install_user_command_aliases() {
+  local name alternative relative
+  for name in fd bat; do
+    case "$name" in fd) alternative=fdfind ;; bat) alternative=batcat ;; esac
+    command_exists "$name" && continue
+    command_exists "$alternative" || continue
+    relative=".local/bin/$name"
+    validate_target_containment "$relative"
+    # Never replace an existing user file, including dangling symlinks.
+    [[ ! -e "$HOME/$relative" && ! -L "$HOME/$relative" ]] || continue
+    if [[ "$BASELINE_MODE" == active ]]; then record_baseline_path "$relative" command_alias '-'; fi
+    mkdir -p "$HOME/.local/bin"
+    ln -s "$(command -v "$alternative")" "$HOME/$relative"
+    mark_path_if_changed "$relative" command_alias '-'
+  done
 }

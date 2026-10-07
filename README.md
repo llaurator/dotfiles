@@ -24,6 +24,38 @@ curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.s
   | bash -s -- --profile server --yes
 ```
 
+### Install without sudo
+
+Use `--user-only` when the administrator has already installed `git`, `stow`,
+`zsh` and `jq`. Missing dependencies abort before cloning or creating a baseline.
+No system packages, sudo, or shell changes are attempted; missing optional tools
+are reported. Zsh components, Stow, Git and the selected profile are configured
+normally. `--install-vscode` cannot be combined with this mode; existing VS Code
+is still configured. On macOS, fonts are downloaded into `~/Library/Fonts`.
+
+On Debian, the administrator runs as root:
+
+```sh
+apt update
+apt install -y git stow zsh jq
+chsh -s /usr/bin/zsh <usuario>
+```
+
+Replace `<usuario>` with the account to configure. Then, as your user, without sudo:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/llaurator/dotfiles/main/bootstrap.sh \
+  | bash -s -- --profile server --yes --user-only
+```
+
+For an existing checkout: `./install.sh --profile server --yes --user-only`.
+Normal installation never silently falls back to this mode. It validates
+privileges before creating a baseline. Bootstrap failures remove only a new,
+unchanged clone when safe; existing repositories and local changes are preserved.
+If installation has created state, the checkout is retained for the existing
+`./install.sh --uninstall` recovery workflow, which verifies ownership before
+restoring files. `--user-only` is an installation option, not an uninstall option.
+
 ### Inspect first (recommended)
 
 Download and inspect the bootstrap script before executing it:

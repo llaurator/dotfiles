@@ -108,4 +108,15 @@ grep -Fq $'homebrew-cask:font-meslo-lg-nerd-font\tmissing\tinstalled_by_cycle' "
 remove_cycle_fonts
 [[ ! -e "$HOME/brew-font-installed" ]] || fail 'macOS no retiró el cask atribuible'
 
+# user-only macOS downloads the same verified files in HOME, never a cask.
+printf 'relative_path\tbefore_fingerprint\tinstalled_fingerprint\n' > "$ACTIVE_CYCLE_DIR/fonts.tsv"
+USER_ONLY=1
+FONTCONFIG_DISABLED=1 install_nerd_font > "$TEST_ROOT/macos-user-only.out"
+[[ ! -e "$HOME/brew-font-installed" ]] || fail 'user-only instaló un cask'
+for style in Regular Bold Italic BoldItalic; do
+  [[ -f "$HOME/Library/Fonts/MesloLGSNerdFont-$style.ttf" ]] || fail 'falta fuente macOS de usuario'
+done
+remove_cycle_fonts
+[[ ! -e "$HOME/Library/Fonts/MesloLGSNerdFont-Regular.ttf" ]] || fail 'rollback de fuente de usuario falló'
+
 printf 'OK: instalación y rollback seguro de MesloLGS Nerd Font\n'

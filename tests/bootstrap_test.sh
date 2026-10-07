@@ -67,9 +67,11 @@ printf '%s\n' \
     'if (( $# > 0 )); then printf "%s\n" "$@" > "$BOOTSTRAP_TEST_ARGS_FILE"; fi' \
     'cd -- "$(dirname -- "${BASH_SOURCE[0]}")"' \
     'pwd > "$BOOTSTRAP_TEST_ROOT_FILE"' \
+    'case "${BOOTSTRAP_TEST_FAILURE:-}" in clean) exit 42;; config) git config local.keep yes; exit 42;; branch) git branch local-work; exit 42;; dirty) echo local > local-change; exit 42;; ignored) echo local > ignored-file; exit 42;; state) mkdir -p "$HOME/.local/state/dotfiles"; exit 42;; esac' \
     > "$SEED_REPOSITORY/install.sh"
 chmod +x "$SEED_REPOSITORY/bootstrap.sh" "$SEED_REPOSITORY/install.sh"
-git_test -C "$SEED_REPOSITORY" add bootstrap.sh install.sh
+printf 'ignored-file\n' > "$SEED_REPOSITORY/.gitignore"
+git_test -C "$SEED_REPOSITORY" add bootstrap.sh install.sh .gitignore
 git_test -C "$SEED_REPOSITORY" -c user.name='Bootstrap Test' \
     -c user.email='bootstrap@example.invalid' commit -qm 'initial fixture'
 initial_commit="$(git_test -C "$SEED_REPOSITORY" rev-parse HEAD)"
@@ -235,6 +237,14 @@ printf '%s\n' \
     'printf "%s\n" "$*" > "$BOOTSTRAP_TEST_MANAGER_LOG"' \
     'touch "$BOOTSTRAP_TEST_GIT_READY"' \
     > "$fake_bin/sudo"
+# Also intercept Arch hosts, including root test runners.
+# shellcheck disable=SC2016
+if command -v pacman >/dev/null 2>&1; then
+    printf '%s\n' '#!/usr/bin/env bash' \
+        'printf "pacman %s\n" "$*" > "$BOOTSTRAP_TEST_MANAGER_LOG"' \
+        'touch "$BOOTSTRAP_TEST_GIT_READY"' > "$fake_bin/pacman"
+    chmod +x "$fake_bin/pacman"
+fi
 chmod +x "$fake_bin/git" "$fake_bin/uname" "$fake_bin/dnf" "$fake_bin/sudo"
 HOME="$case_m_home" DOTFILES_DIR="$case_m_repo" PATH="$fake_bin:$PATH" \
     GIT_CONFIG_GLOBAL="$TEST_GIT_CONFIG" GIT_CONFIG_NOSYSTEM=1 \
@@ -243,7 +253,30 @@ HOME="$case_m_home" DOTFILES_DIR="$case_m_repo" PATH="$fake_bin:$PATH" \
     BOOTSTRAP_TEST_ARGS_FILE="$case_m_home/installer-args" \
     BOOTSTRAP_TEST_ROOT_FILE="$case_m_home/installer-root" \
     bash -s -- --profile server --yes < "$ROOT_DIR/bootstrap.sh" > "$case_m_home/output" 2>&1
-assert_contains "$manager_log" 'dnf install -y git'
+if command -v pacman >/dev/null 2>&1; then
+    assert_contains "$manager_log" 'pacman -S --needed git'
+else
+    assert_contains "$manager_log" 'dnf install -y git'
+fi
 [[ -d "$case_m_repo/.git" ]] || fail 'el bootstrap no continuó tras obtener Git'
+
+# A failed installer cleans only a clone created by this bootstrap invocation.
+for failure in clean dirty ignored state config branch; do
+    failure_home="$TEST_ROOT/failure-$failure"
+    mkdir "$failure_home"
+    failure_repo="$failure_home/.local/share/dotfiles"
+    if BOOTSTRAP_TEST_FAILURE="$failure" run_bootstrap "$failure_home" "$failure_home/output" --profile server --yes --user-only; then
+        fail 'el instalador ficticio debía fallar'
+    fi
+    if [[ "$failure" == clean ]]; then
+        [[ ! -e "$failure_repo" ]] || fail 'no limpió el clon nuevo intacto'
+    else
+        [[ -d "$failure_repo/.git" ]] || fail 'borró cambios o un clon necesario para rollback'
+    fi
+done
+if BOOTSTRAP_TEST_FAILURE=clean run_bootstrap "$case_a_home" "$case_a_home/failed-existing" --profile server --yes; then
+    fail 'el instalador existente debía fallar'
+fi
+[[ -d "$case_a_repo/.git" ]] || fail 'borró un repositorio preexistente'
 
 printf 'OK: bootstrap remoto seguro e idempotente\n'

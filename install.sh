@@ -10,6 +10,7 @@ source "$ROOT_DIR/scripts/state.sh"
 
 PROFILE=""
 ASSUME_YES=0
+USER_ONLY=0
 MIGRATE_BASH_HISTORY=0
 DRY_RUN=0
 UNINSTALL=0
@@ -44,6 +45,7 @@ Opciones:
                           Importar de forma segura ~/.bash_history en ~/.zsh_history
       --uninstall         Retirar dotfiles y restaurar la baseline disponible
       --keep-packages     Con --uninstall, conservar paquetes, upstream y fuentes
+      --user-only         Configurar solo HOME; requiere git, stow, zsh y jq preinstalados
       --status            Mostrar el estado sin modificar archivos
       --backup-conflicts  Respaldar conflictos explícitamente antes de instalar
       --install-vscode    Instalar VS Code explícitamente en personal/work
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --uninstall) UNINSTALL=1; shift ;;
         --keep-packages) KEEP_PACKAGES=1; shift ;;
         --status) SHOW_STATUS=1; shift ;;
+        --user-only) USER_ONLY=1; shift ;;
         --backup-conflicts) BACKUP_CONFLICTS=1; shift ;;
         --install-vscode) INSTALL_VSCODE=1; shift ;;
         --configure-konsole) CONFIGURE_KONSOLE=1; shift ;;
@@ -91,9 +94,15 @@ if [[ "$CONFIGURE_KONSOLE" -eq 1 ]] && (( explicit_actions > 0 )); then
     die '--configure-konsole solo puede usarse al instalar.'
 fi
 
+if [[ "$USER_ONLY" -eq 1 ]]; then
+    (( explicit_actions == 0 )) || die '--user-only solo puede usarse al instalar.'
+    [[ "$INSTALL_VSCODE" -eq 0 ]] || die '--user-only no permite --install-vscode; preinstala code para configurarlo.'
+    validate_user_only_dependencies
+fi
+
 print_banner
 ACTION='install'
-if (( explicit_actions == 0 )) && [[ -z "$PROFILE" && "$ASSUME_YES" -eq 0 && "$BACKUP_CONFLICTS" -eq 0 ]]; then
+if (( explicit_actions == 0 )) && [[ -z "$PROFILE" && "$ASSUME_YES" -eq 0 && "$BACKUP_CONFLICTS" -eq 0 && "$USER_ONLY" -eq 0 ]]; then
     ACTION="$(choose_action)"
 elif [[ "$MIGRATE_BASH_HISTORY" -eq 1 ]]; then
     ACTION='migrate'
@@ -168,12 +177,27 @@ select_vscode_install "$PROFILE"
 select_konsole_configure "$PROFILE"
 
 resolve_install_conflicts
+if [[ "$USER_ONLY" -eq 0 ]]; then
+    if [[ "$DOTFILES_OS" == linux ]]; then
+        validate_sudo_once || die 'No se puede continuar sin los privilegios necesarios.'
+    else
+        [[ -x /opt/homebrew/bin/brew || -x /usr/local/bin/brew ]] || command_exists brew || die 'Homebrew no está instalado.'
+        if [[ "$(current_login_shell)" != /bin/zsh ]]; then
+            validate_sudo_once || die 'No se puede continuar sin privilegios para cambiar el shell.'
+        fi
+    fi
+fi
 begin_reversible_install "$PROFILE"
 
-info "Instalando paquetes del sistema..."
-record_packages_before
-install_system_packages
-record_packages_after
+if [[ "$USER_ONLY" -eq 1 ]]; then
+    info '--user-only: se omite la instalación de paquetes del sistema.'
+else
+    info "Instalando paquetes del sistema..."
+    record_packages_before
+    install_system_packages
+    record_packages_after
+fi
+install_user_command_aliases
 
 record_upstream_before
 install_common_components

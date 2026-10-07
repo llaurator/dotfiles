@@ -8,10 +8,6 @@ install_system_packages() {
       warn "Paquete opcional no disponible mediante dnf: $package"
     fi
   done
-  if ! command_exists fd && command_exists fdfind; then
-    mkdir -p "$HOME/.local/bin"
-    ln -sfn "$(command -v fdfind)" "$HOME/.local/bin/fd"
-  fi
   if [[ "$REQUEST_INSTALL_VSCODE" -eq 1 ]] && ! command_exists code; then install_fedora_vscode; fi
 }
 

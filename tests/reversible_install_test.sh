@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
+export TEST_ROOT
 cleanup() {
   local status=$?
   if (( status != 0 )); then
@@ -112,6 +113,11 @@ mkdir -p "$FIXTURE_REPO" "$FAKE_BIN"
 cp -R "$ROOT_DIR/install.sh" "$ROOT_DIR/scripts" "$ROOT_DIR/zsh" "$ROOT_DIR/git" \
   "$ROOT_DIR/btop" "$ROOT_DIR/ssh" "$ROOT_DIR/vscode" "$FIXTURE_REPO/"
 
+# This fixture models Fedora package rollback even on an Arch/macOS host.
+# Platform detection itself is covered by platform_uninstall_test.sh.
+printf '%s\n' 'detect_platform() { DOTFILES_OS=linux; DOTFILES_DISTRO=fedora; DOTFILES_ARCH=test; DOTFILES_HOST=test; }' \
+  >> "$FIXTURE_REPO/scripts/lib.sh"
+
 # Ningún gestor de paquetes real se ejecuta en la copia de prueba.
 for platform_script in macos arch fedora debian; do
   printf '%s\n' '#!/usr/bin/env bash' 'get_system_packages() { SYSTEM_PACKAGES=(); }' 'install_system_packages() { :; }' \
@@ -178,7 +184,7 @@ mv "$FAKE_BIN/sudo.disabled" "$FAKE_BIN/sudo"
 home_a="$TEST_ROOT/home-a"
 prepare_home "$home_a"
 run_install "$home_a" "$home_a/install.out" --profile server --yes
-[[ ! -e "$TEST_ROOT/privileged.log" ]] || fail 'el primer install alcanzó sudo o chsh pese al zsh temporal'
+[[ "$(cat "$TEST_ROOT/privileged.log")" == 'sudo -v' ]] || fail 'el primer install debe validar privilegios antes de la baseline'
 cycle_a="$(active_cycle_dir "$home_a")"
 [[ -L "$home_a/.zshrc" && -L "$home_a/.gitconfig" ]] || fail 'Stow no desplegó los enlaces esperados'
 assert_contains "$cycle_a/manifest.tsv" $'.zshrc\tmissing\t-\t-\tstow\tzsh/.zshrc'
@@ -412,7 +418,7 @@ HOME="$home_u" XDG_STATE_HOME='' GIT_CONFIG_NOSYSTEM=1 \
 # shellcheck disable=SC2016
 printf '%s\n' '#!/usr/bin/env bash' 'printf "dnf %s\n" "$*" >> "$KEEP_MANAGER_LOG"; exit 99' > "$FAKE_BIN/dnf"
 # shellcheck disable=SC2016
-printf '%s\n' '#!/usr/bin/env bash' 'printf "sudo %s\n" "$*" >> "$KEEP_MANAGER_LOG"; exit 99' > "$FAKE_BIN/sudo"
+printf '%s\n' '#!/usr/bin/env bash' '[[ "${1:-}" == -v ]] && exit 0' 'printf "sudo %s\n" "$*" >> "$KEEP_MANAGER_LOG"; exit 99' > "$FAKE_BIN/sudo"
 chmod +x "$FAKE_BIN/dnf" "$FAKE_BIN/sudo"
 home_keep="$TEST_ROOT/home-keep-packages"
 keep_manager_log="$TEST_ROOT/keep-manager.log"

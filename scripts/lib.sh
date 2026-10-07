@@ -40,6 +40,7 @@ is_valid_login_shell(){
 }
 is_root_user(){ local uid; uid="$(id -u)" || return 1; [[ "$uid" == 0 ]]; }
 validate_sudo_once(){
+  [[ "${USER_ONLY:-0}" -ne 1 ]] || die 'Error interno: operación privilegiada prohibida con --user-only.'
   [[ "$SUDO_VALIDATED" -eq 0 ]] || return 0
   is_root_user && { SUDO_VALIDATED=1; return 0; }
   command_exists sudo || { warn 'Se necesitan privilegios y sudo no está disponible.'; return 1; }
@@ -48,6 +49,7 @@ validate_sudo_once(){
   SUDO_VALIDATED=1
 }
 run_privileged(){
+  [[ "${USER_ONLY:-0}" -ne 1 ]] || die 'Error interno: operación privilegiada prohibida con --user-only.'
   if is_root_user; then "$@"; return; fi
   validate_sudo_once || return 1
   sudo "$@"
@@ -105,4 +107,26 @@ print_plan(){
   printf '  ✓ zsh\n  ✓ git\n  ✓ stow\n  ✓ fzf\n  ✓ zoxide\n  ✓ eza\n  ✓ bat\n  ✓ ripgrep\n  ✓ btop\n  ✓ grc\n  ✓ Oh My Zsh\n  ✓ Powerlevel10k\n  ✓ plugins Zsh\n'
   case "$1" in personal) printf '  ✓ configuración SSH cliente\n' ;; work) printf '  ✓ configuración SSH cliente\n  ✓ perfil de trabajo\n' ;; server) printf '  ✓ perfil ligero de servidor\n' ;; esac
   case "$1" in personal|work) printf '  ✓ VS Code (si está disponible) y extensiones mínimas\n' ;; esac
+}
+
+# Bootstrap carries only this small dependency check because it runs before clone.
+validate_user_only_dependencies() {
+  local dependency
+  local -a missing=()
+  for dependency in git stow zsh jq; do
+    command_exists "$dependency" || missing+=("$dependency")
+  done
+  (( ${#missing[@]} )) || return 0
+  printf '✗ No se puede continuar con --user-only.\n\nFaltan dependencias obligatorias:\n' >&2
+  printf '  - %s\n' "${missing[@]}" >&2
+  if command_exists pacman; then
+    printf '\nComo root en Arch:\n  pacman -S --needed %s\n' "${missing[*]}" >&2
+  elif command_exists dnf; then
+    printf '\nComo root en Fedora:\n  dnf install -y %s\n' "${missing[*]}" >&2
+  elif command_exists apt-get; then
+    printf '\nComo root en Debian/Ubuntu:\n  apt update && apt install -y %s\n' "${missing[*]}" >&2
+  elif [[ "$(uname -s)" == Darwin ]]; then
+    printf '\nPide al administrador que las preinstale con Homebrew:\n  brew install %s\n' "${missing[*]}" >&2
+  fi
+  exit 1
 }

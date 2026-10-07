@@ -120,7 +120,7 @@ run_case() {
   HOME="$home" XDG_STATE_HOME="$home/.state" PATH="$bin" \
     PLATFORM_OS_NAME="$os_name" PLATFORM_MANAGER_LOG="$manager_log" PLATFORM_FORBIDDEN_LOG="$forbidden_log" \
     DOTFILES_SKIP_FONT=1 DOTFILES_LOGIN_SHELL=/bin/bash GIT_CONFIG_GLOBAL="$home/.gitconfig" \
-    GIT_CONFIG_NOSYSTEM=1 "$repo/install.sh" --profile server --yes > "$case_root/install.out" 2>&1
+    GIT_CONFIG_NOSYSTEM=1 "$repo/install.sh" --profile server --yes --user-only > "$case_root/install.out" 2>&1
   cycle="$home/.state/dotfiles/cycles/$(< "$home/.state/dotfiles/active")"
   printf 'code\t%s\tinstalled_by_cycle\n' "$manager" >> "$cycle/packages.tsv"
   snapshot_before="$(find "$home" -type f -o -type l | sort | xargs cksum)"
