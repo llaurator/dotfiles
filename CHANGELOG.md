@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.5.0](https://github.com/llaurator/dotfiles/compare/v1.4.3...v1.5.0) (2026-10-07)
+
+### ✨ Features
+
+* **zsh:** add interactive SSH host selector ([1f1005d](https://github.com/llaurator/dotfiles/commit/1f1005d563262662e62b16138b149cff9e1a38ce))
+
 ## [1.4.3](https://github.com/llaurator/dotfiles/compare/v1.4.2...v1.4.3) (2026-08-31)
 
 ### 🐛 Fixes
