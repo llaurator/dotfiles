@@ -83,6 +83,65 @@ if command -v grc >/dev/null 2>&1; then
   unset GRC_DIR conf cmd
 fi
 
+sshs() {
+    local selected host
+    local -a configs
+
+    configs=(
+        ~/.ssh/config(N)
+        ~/.ssh/config.d/*(N)
+    )
+
+    (( ${#configs[@]} )) || {
+        echo "No se encontraron archivos de configuración SSH"
+        return 1
+    }
+
+    selected=$(
+        awk '
+            tolower($1) == "host" {
+                for (i = 2; i <= NF; i++) {
+                    if ($i !~ /[*?!]/)
+                        print $i
+                }
+            }
+        ' "${configs[@]}" |
+        sort -u |
+        while IFS= read -r host; do
+            ssh -G "$host" 2>/dev/null |
+            awk -v alias="$host" '
+                $1 == "hostname" && hostname == "" { hostname=$2 }
+                $1 == "user"     && user == ""     { user=$2 }
+                $1 == "port"     && port == ""     { port=$2 }
+                $1 == "proxyjump" && jump == ""    { jump=$2 }
+
+                END {
+                    printf "%s\t%s\t%s\t%s\t%s\n",
+                        alias,
+                        hostname,
+                        user,
+                        port,
+                        (jump == "" || jump == "none" ? "-" : jump)
+                }
+            '
+        done |
+        column -t -s $'\t' |
+        fzf \
+            --prompt="SSH > " \
+            --header="HOST  HOSTNAME  USER  PORT  PROXY" \
+            --preview='
+                host=$(echo {} | awk "{print \$1}")
+                ssh -G "$host" 2>/dev/null |
+                grep -E "^(hostname|user|port|identityfile|proxyjump|proxycommand) "
+            ' \
+            --preview-window='right:45%'
+    ) || return
+
+    host="${selected%% *}"
+
+    [[ -n "$host" ]] && ssh "$host"
+}
+
 if command -v eza >/dev/null 2>&1; then
   alias ls='eza --icons=auto --group-directories-first'
   alias ll='eza -lah --icons=auto --group-directories-first --git --header'
