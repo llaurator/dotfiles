@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.8.0](https://github.com/llaurator/dotfiles/compare/v1.7.0...v1.8.0) (2026-10-28)
+
+### ✨ Features
+
+* **zsh:** improve WireGuard VPN status and IP reporting ([694facc](https://github.com/llaurator/dotfiles/commit/694facc42bc734f2cfd678fbedeba7c99248145e))
+
 ## [1.7.0](https://github.com/llaurator/dotfiles/compare/v1.6.1...v1.7.0) (2026-10-28)
 
 ### ✨ Features
