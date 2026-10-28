@@ -166,3 +166,6 @@ alias gi='git init'
 alias ga='git add'
 alias gc='git commit -m'
 alias cb='git checkout'
+
+# Control manual de WireGuard.
+[[ -r "$HOME/.config/zsh/vpn.zsh" ]] && source "$HOME/.config/zsh/vpn.zsh"
