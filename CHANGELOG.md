@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.7.0](https://github.com/llaurator/dotfiles/compare/v1.6.1...v1.7.0) (2026-10-28)
+
+### ✨ Features
+
+* **zsh:** add manual WireGuard VPN controls ([df9cbc0](https://github.com/llaurator/dotfiles/commit/df9cbc0929c3ea5535202d53e16c2ba92afb95d3))
+
 ## [1.6.1](https://github.com/llaurator/dotfiles/compare/v1.6.0...v1.6.1) (2026-10-07)
 
 ### 🐛 Fixes
