@@ -2,6 +2,12 @@
 
 Cambios generados automáticamente a partir de Conventional Commits.
 
+## [1.9.0](https://github.com/llaurator/dotfiles/compare/v1.8.0...v1.9.0) (2026-11-24)
+
+### ✨ Features
+
+* **zsh:** enable history substring search ([ad97c3a](https://github.com/llaurator/dotfiles/commit/ad97c3a070d01eca85499e5a6368f26ea1f127f0))
+
 ## [1.8.0](https://github.com/llaurator/dotfiles/compare/v1.7.0...v1.8.0) (2026-10-28)
 
 ### ✨ Features
