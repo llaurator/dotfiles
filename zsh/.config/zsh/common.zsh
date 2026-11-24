@@ -8,7 +8,7 @@ unset DOTFILES_ZSH_COMPONENTS_FILE
 
 if [[ -n "${ZSH:-}" && -r "$ZSH/oh-my-zsh.sh" ]]; then
   ZSH_THEME=""
-  plugins=(git colored-man-pages extract sudo)
+  plugins=(git colored-man-pages extract sudo history-substring-search)
   source "$ZSH/oh-my-zsh.sh"
 fi
 
